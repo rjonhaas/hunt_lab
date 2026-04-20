@@ -192,7 +192,7 @@ print(token or '')
 " 2>/dev/null)
 
 echo "${ENROLL_TOKEN}" > /vagrant/fleet-enrollment-token.txt
-chmod 644 /vagrant/fleet-enrollment-token.txt
+chmod 600 /vagrant/fleet-enrollment-token.txt
 log "Fleet enrollment token written to /vagrant/fleet-enrollment-token.txt"
 
 # ── 12. Fix Fleet default output — localhost:9200 is correct for the Fleet
