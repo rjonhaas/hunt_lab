@@ -1,0 +1,26 @@
+# ── Vagrant runtime ───────────────────────────────────────────────────────────
+.vagrant/
+
+# ── Sensitive generated credentials ───────────────────────────────────────────
+# These are written by provisioning scripts and must NOT be committed.
+elastic-credentials.txt
+fleet-enrollment-token.txt
+
+# ── Vagrant box cache ─────────────────────────────────────────────────────────
+*.box
+
+# ── Plugin source (downloaded separately, not part of this lab project) ───────
+vagrant-vmware-desktop-main/
+vagrant-vmware-desktop-main.zip
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+
+# ── Windows ───────────────────────────────────────────────────────────────────
+Thumbs.db
+
+# ── Editor ────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
