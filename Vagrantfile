@@ -1,12 +1,12 @@
 # Vagrantfile
-# Threat Hunting Lab: Elastic SIEM + Windows 11 Victim + MITRE Caldera
+# Threat Hunting Lab: Elastic SIEM + Windows 11 Victim + MITRE Caldera + Local Cloud Sim
 #
 # IMPORTANT: Provision elastic-siem first — it writes the Fleet enrollment
 # token that win11-victim needs during its provisioning step.
 #
 # Recommended launch order (handled automatically by setup.sh):
 #   vagrant up elastic-siem
-#   vagrant up caldera win11-victim
+#   vagrant up caldera cloud-sim win11-victim
 #
 # Manual launch:
 #   vagrant up --no-parallel
@@ -50,6 +50,23 @@ Vagrant.configure("2") do |config|
     end
 
     cal.vm.provision "shell", path: "scripts/install_caldera.sh"
+  end
+
+  # ── Local Cloud Simulator (LocalStack + CloudTrail + Filebeat) ───────────
+  config.vm.define "cloud-sim" do |cloud|
+    cloud.vm.box      = "bento/ubuntu-22.04"
+    cloud.vm.hostname = "cloud-sim"
+    cloud.vm.network  "private_network", ip: "192.168.56.40"
+
+    cloud.vm.provider "vmware_desktop" do |v|
+      v.memory = 4096
+      v.cpus   = 2
+      v.vmx["displayname"] = "cloud-sim"
+      v.gui = false
+      v.linked_clone = false
+    end
+
+    cloud.vm.provision "shell", path: "scripts/install_cloud_sim.sh"
   end
 
   # ── Windows 11 Victim ─────────────────────────────────────────────────────

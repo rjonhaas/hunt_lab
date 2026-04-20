@@ -5,6 +5,7 @@
 # These are written by provisioning scripts and must NOT be committed.
 elastic-credentials.txt
 fleet-enrollment-token.txt
+localstack-auth-token.txt
 
 # ── Vagrant box cache ─────────────────────────────────────────────────────────
 *.box

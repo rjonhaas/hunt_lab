@@ -69,6 +69,24 @@ hunt_lab/
 **Generated at runtime (git-ignored):**
 - `elastic-credentials.txt` — `elastic` superuser password, written by `install_elastic.sh`
 - `fleet-enrollment-token.txt` — Fleet enrollment token consumed by `install_win_tools.ps1`
+- `localstack-auth-token.txt` — Optional LocalStack token on host; enables Pro features for `cloud-sim`
+
+## Optional: Enable LocalStack Pro Features
+
+If you have a LocalStack account/token, create this file in the repo root before provisioning `cloud-sim`:
+
+```text
+localstack-auth-token.txt
+```
+
+Put your token as the only line in that file.
+
+When present, `scripts/install_cloud_sim.sh` automatically:
+
+1. Uses `localstack/localstack-pro:3.4`
+2. Passes `LOCALSTACK_AUTH_TOKEN` into the LocalStack container
+
+If the file is missing, provisioning falls back to Community mode automatically.
 
 ---
 

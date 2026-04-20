@@ -283,17 +283,22 @@ Write-Log "  Estimated time: 25-40 minutes on first run"
 Write-Log "================================================================="
 Write-Log ""
 
-Write-Log "Step 1/3 - elastic-siem (Elasticsearch + Kibana + Fleet)..."
+Write-Log "Step 1/4 - elastic-siem (Elasticsearch + Kibana + Fleet)..."
 & $vagrantExe up elastic-siem --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "elastic-siem provisioning failed. Check the output above for details." }
 Write-Ok "elastic-siem is up."
 
-Write-Log "Step 2/3 - caldera (MITRE Caldera C2)..."
+Write-Log "Step 2/4 - caldera (MITRE Caldera C2)..."
 & $vagrantExe up caldera --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "caldera provisioning failed. Check the output above for details." }
 Write-Ok "caldera is up."
 
-Write-Log "Step 3/3 - win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
+Write-Log "Step 3/4 - cloud-sim (LocalStack + CloudTrail + Filebeat)..."
+& $vagrantExe up cloud-sim --provision
+if ($LASTEXITCODE -ne 0) { Write-Die "cloud-sim provisioning failed. Check the output above for details." }
+Write-Ok "cloud-sim is up."
+
+Write-Log "Step 4/4 - win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
 & $vagrantExe up win11-victim --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "win11-victim provisioning failed. Check the output above for details." }
 Write-Ok "win11-victim is up."
@@ -308,6 +313,7 @@ Write-Ok  "  Lab is up and ready!"
 Write-Log ""
 Write-Log "  Kibana (SIEM):   http://192.168.56.10:5601"
 Write-Log "  Caldera (C2):    http://192.168.56.30:8888   (admin / admin)"
+Write-Log "  LocalStack API:  http://192.168.56.40:4566"
 Write-Log "  Elastic creds:   $elasticCreds"
 Write-Log ""
 Write-Log "  RDP into victim: vagrant rdp win11-victim"

@@ -89,13 +89,16 @@ log "  Total estimated time: 25–40 minutes on first run"
 log "================================================================="
 log ""
 
-log "Step 1/3 — Provisioning elastic-siem (Elasticsearch + Kibana + Fleet)..."
+log "Step 1/4 — Provisioning elastic-siem (Elasticsearch + Kibana + Fleet)..."
 vagrant up elastic-siem --provision
 
-log "Step 2/3 — Provisioning caldera (MITRE Caldera C2)..."
+log "Step 2/4 — Provisioning caldera (MITRE Caldera C2)..."
 vagrant up caldera --provision
 
-log "Step 3/3 — Provisioning win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
+log "Step 3/4 — Provisioning cloud-sim (LocalStack + CloudTrail + Filebeat)..."
+vagrant up cloud-sim --provision
+
+log "Step 4/4 — Provisioning win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
 vagrant up win11-victim --provision
 
 # ── 7. Print access info ──────────────────────────────────────────────────────
@@ -110,6 +113,7 @@ log "  Lab is up!"
 log ""
 log "  Kibana (SIEM):   http://192.168.56.10:5601"
 log "  Caldera (C2):    http://192.168.56.30:8888   (admin / admin)"
+log "  LocalStack API:  http://192.168.56.40:4566"
 log ""
 if [[ -n "${ELASTIC_CREDS}" ]]; then
 log "  Elastic creds:   ${ELASTIC_CREDS}"

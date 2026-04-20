@@ -17,12 +17,17 @@ CALDERA_PORT="8888"
 CLOUD_SIM_IP="192.168.56.40"
 CLOUDTRAIL_LOG_DIR="/var/log/localstack/cloudtrail"
 ELASTIC_VERSION="8.13.4"
+LOCALSTACK_AUTH_TOKEN=""
+LOCALSTACK_IMAGE="localstack/localstack:${LOCALSTACK_VERSION}"
 
 log() { echo "[cloud-sim] $*"; }
 
 # ── 1. System prep ────────────────────────────────────────────────────────────
 log "Updating packages..."
 export DEBIAN_FRONTEND=noninteractive
+# Remove stale Elastic repo entries from previous failed runs.
+# A bad key/repo state can break apt-get update before we reconfigure it later.
+rm -f /etc/apt/sources.list.d/elastic-8.x.list
 apt-get update -qq
 apt-get install -y -qq curl gnupg ca-certificates lsb-release jq python3 python3-pip unzip
 
@@ -72,13 +77,30 @@ log "Setting up LocalStack directories..."
 mkdir -p /opt/localstack/data
 mkdir -p "${CLOUDTRAIL_LOG_DIR}"
 
+# Optional: enable LocalStack Pro if a host token was shared via /vagrant.
+# The token file should exist on the host as ./localstack-auth-token.txt.
+if [[ -f /vagrant/localstack-auth-token.txt ]]; then
+  LOCALSTACK_AUTH_TOKEN=$(tr -d '\r\n' < /vagrant/localstack-auth-token.txt)
+fi
+if [[ -n "${LOCALSTACK_AUTH_TOKEN}" ]]; then
+  LOCALSTACK_IMAGE="localstack/localstack-pro:${LOCALSTACK_VERSION}"
+  log "LocalStack Pro token detected. Using ${LOCALSTACK_IMAGE}."
+else
+  log "No LocalStack token detected. Using ${LOCALSTACK_IMAGE} (Community mode)."
+fi
+
+AUTH_TOKEN_ENV_LINE=""
+if [[ -n "${LOCALSTACK_AUTH_TOKEN}" ]]; then
+  AUTH_TOKEN_ENV_LINE="      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}"
+fi
+
 # ── 5. Deploy LocalStack via Docker Compose ───────────────────────────────────
 log "Writing LocalStack docker-compose.yml..."
 cat > /opt/localstack/docker-compose.yml <<EOF
 version: "3.8"
 services:
   localstack:
-    image: localstack/localstack:${LOCALSTACK_VERSION}
+    image: ${LOCALSTACK_IMAGE}
     restart: unless-stopped
     ports:
       - "4566:4566"        # LocalStack Gateway
@@ -89,6 +111,7 @@ services:
       - DEBUG=0
       - DATA_DIR=/var/lib/localstack/data
       - DOCKER_HOST=unix:///var/run/docker.sock
+${AUTH_TOKEN_ENV_LINE}
     volumes:
       - localstack-data:/var/lib/localstack
       - /var/run/docker.sock:/var/run/docker.sock
@@ -227,8 +250,8 @@ chmod 644 /etc/cron.d/cloudtrail-export
 
 # ── 9. Install and configure Filebeat ─────────────────────────────────────────
 log "Installing Filebeat..."
-wget -qO /usr/share/keyrings/elasticsearch-keyring.gpg \
-  https://artifacts.elastic.co/GPG-KEY-elasticsearch 2>/dev/null || true
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch \
+  | gpg --batch --yes --dearmor -o /usr/share/keyrings/elasticsearch-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/elasticsearch-keyring.gpg] \
   https://artifacts.elastic.co/packages/8.x/apt stable main" \
   > /etc/apt/sources.list.d/elastic-8.x.list
