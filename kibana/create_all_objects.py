@@ -6,11 +6,28 @@ import json, sys
 import urllib.request
 import urllib.error
 import base64
+from pathlib import Path
 
 KIBANA_URL = "http://192.168.56.10:5601"
-USER = "elastic"
-PASS = "9XxgDwUqYK=G89627age"
 DATA_VIEW_ID = "hunt-lab-logs-data-view"
+
+
+def load_credentials():
+    creds_path = Path(__file__).resolve().parents[1] / "elastic-credentials.txt"
+    try:
+        raw_creds = creds_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Credentials file not found: {creds_path}") from exc
+
+    user, sep, password = raw_creds.partition(":")
+    if not sep or not user or not password:
+        raise RuntimeError(
+            f"Credentials file {creds_path} must contain 'user:password' on one line"
+        )
+    return user, password
+
+
+USER, PASS = load_credentials()
 
 
 def kibana_request(method, path, body=None):

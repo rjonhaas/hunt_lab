@@ -296,9 +296,18 @@ $TemplateNdjson = Join-Path $PSScriptRoot "kibana\hunt_report_template.ndjson"
 if (Test-Path $TemplateNdjson) {
     Write-Log "Importing Kibana Threat Hunt Report Template..."
 
-    # Parse credentials (format: user:password)
-    $RawCreds = if (Test-Path $CredsFile) { (Get-Content $CredsFile -Raw).Trim() } else { "elastic:changeme" }
+    # Parse credentials (format: user:password) — fail loudly if the file is missing
+    if (-not (Test-Path $CredsFile)) {
+        Write-Warn "elastic-credentials.txt not found — skipping Kibana template import."
+        Write-Warn "  Re-run after elastic-siem is fully provisioned, then import manually (see kibana/README.md)."
+        return
+    }
+    $RawCreds = (Get-Content $CredsFile -Raw).Trim()
     $ColonIdx = $RawCreds.IndexOf(":")
+    if ($ColonIdx -le 0) {
+        Write-Warn "elastic-credentials.txt does not contain a valid 'user:password' entry — skipping import."
+        return
+    }
     $KibUser  = $RawCreds.Substring(0, $ColonIdx)
     $KibPass  = $RawCreds.Substring($ColonIdx + 1)
     $B64Creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${KibUser}:${KibPass}"))
