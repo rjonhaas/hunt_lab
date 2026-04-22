@@ -1,0 +1,49 @@
+# filebeat.yml — ships CloudTrail-formatted JSON events to Elasticsearch.
+# Mounted read-only into the filebeat container.
+
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/localstack/cloudtrail/*.json
+    json.keys_under_root: true
+    json.add_error_key: false
+    json.message_key: "eventName"
+    fields_under_root: true
+    fields:
+      event.dataset: aws.cloudtrail
+      cloud.provider: aws
+      cloud.region: us-east-1
+    close_inactive: 5m
+    scan_frequency: 10s
+    # Deduplicate on eventID so re-reads after restart don't double-index
+    harvester_buffer_size: 16384
+
+processors:
+  - add_host_metadata: ~
+  - add_docker_metadata: ~
+  - timestamp:
+      field: eventTime
+      layouts:
+        - "2006-01-02T15:04:05Z"
+      test:
+        - "2026-04-22T12:00:00Z"
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  username: "elastic"
+  password: "${ELASTIC_PASSWORD}"
+  index: "logs-aws.cloudtrail-default"
+  ssl.enabled: false
+
+setup.ilm.enabled: false
+setup.template.enabled: false
+
+# Kibana connection (for dashboard setup if run manually)
+setup.kibana:
+  host: "http://kibana:5601"
+  username: "elastic"
+  password: "${ELASTIC_PASSWORD}"
+
+logging.level: info
+logging.to_files: false

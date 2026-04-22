@@ -1,0 +1,41 @@
+# Caldera server config for the Docker single-server deployment.
+# HOST_IP is substituted by bootstrap.sh; this file is mounted read-only
+# into the container at /usr/src/app/conf/local.yml.
+# If you edit this file, restart the caldera container:
+#   docker compose restart caldera
+
+host: 0.0.0.0
+port: 8888
+
+plugins:
+  - access
+  - atomic
+  - compass
+  - debrief
+  - fieldmanual
+  - manx
+  - response
+  - sandcat
+  - stockpile
+  - training
+
+# app.contact.http is the URL agents beacon back to (must be the host LAN IP)
+# app.contact.tcp/udp/websocket are bind addresses inside the container
+app.contact.http: http://HOST_IP_PLACEHOLDER:8888
+app.contact.dns.domain: caldera.lab
+app.contact.tcp: 0.0.0.0:7010
+app.contact.udp: 0.0.0.0:7011
+app.contact.websocket: 0.0.0.0:7012
+
+# Default admin credentials — change if exposing beyond the local network
+users:
+  red:
+    admin: admin
+    red: admin
+  blue:
+    blue: admin
+api_key_red: ADMIN123
+api_key_blue: BLUEADMIN123
+
+crypt_salt: hunt-lab-salt-6ddf9d464e5eb723
+encryption_key: hunt-lab-enc-key-2026

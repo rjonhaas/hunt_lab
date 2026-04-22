@@ -107,6 +107,102 @@ If the file is missing, provisioning falls back to Community mode automatically.
 
 ---
 
+## Alternative: Docker Single-Server Deployment
+
+> **Branch:** `feat/docker-single-server`
+>
+> This branch replaces the three Ubuntu VMs (`elastic-siem`, `caldera`, `cloud-sim`) with a single Docker Compose stack on one Ubuntu host. The Windows 11 victim (`win11-victim`) still runs as a Vagrant VM pointing at the host IP for Fleet enrollment.
+
+### Requirements
+
+| Resource | Minimum | Recommended |
+|---|---|---|
+| RAM | 16 GB | 24 GB |
+| CPU | 4 cores | 8+ cores |
+| OS | Ubuntu 22.04+ | — |
+| Docker Engine | 24+ | — |
+
+### Quick Start
+
+```bash
+# 1. Install Docker Engine (if not already present)
+curl -fsSL https://get.docker.com | sh
+
+# 2. Clone and enter the repo on this branch
+git clone -b feat/docker-single-server <repo-url> hunt_lab
+cd hunt_lab/docker
+
+# 3. Configure environment
+cp .env.example .env
+nano .env   # set HOST_IP, ELASTIC_PASSWORD, KIBANA_SYSTEM_PASSWORD
+
+# 4. Run setup
+chmod +x setup.sh && bash setup.sh
+```
+
+### Services and ports
+
+| Service | Container | Port |
+|---|---|---|
+| Elasticsearch | `elasticsearch` | 9200 |
+| Kibana | `kibana` | 5601 |
+| Fleet Server | `fleet-server` | 8220 |
+| MITRE Caldera | `caldera` | 8888, 7010-7012 |
+| LocalStack | `localstack` | 4566 |
+| Filebeat | `filebeat` | — |
+| CloudTrail gen | `cloudtrail-gen` | — |
+
+### Docker project layout
+
+```
+docker/
+├── docker-compose.yml
+├── setup.sh                            # Host setup script
+├── .env.example                        # Copy to .env and fill in values
+├── fleet-enrollment-token.txt          # Written by bootstrap (git-ignored)
+├── cloudtrail/                         # CloudTrail event JSON files (Filebeat input)
+├── bootstrap/
+│   ├── bootstrap.sh                    # One-shot Elastic + Fleet setup container
+│   └── generate_cloudtrail_activity.sh # Emits CloudTrail events every 60s
+└── config/
+    ├── caldera/local.yml               # Caldera server config (HOST_IP injected at boot)
+    └── filebeat/filebeat.yml           # Ships cloudtrail/ → Elasticsearch
+```
+
+### Key differences from the Vagrant layout
+
+| | Vagrant (main) | Docker (this branch) |
+|---|---|---|
+| Elastic stack | Dedicated VM (192.168.56.10) | Container on host |
+| Caldera | Dedicated VM (192.168.56.30) | Container on host |
+| LocalStack | Dedicated VM (192.168.56.40) | Container on host |
+| Windows victim | Vagrant VM | Vagrant VM (unchanged) |
+| Startup time | 25–40 min | 5–10 min |
+| Resource use | 20+ GB RAM across VMs | 10–12 GB total |
+| Network isolation | Real host-only NICs | Docker bridge network |
+| Reprovisioning | `vagrant provision <vm>` | `docker compose restart <svc>` |
+
+### Useful commands
+
+```bash
+# View all service logs
+docker compose logs -f
+
+# Re-run bootstrap (e.g. after wiping volumes)
+docker compose run --rm bootstrap
+
+# Restart a single service
+docker compose restart caldera
+
+# Stop without deleting volumes
+docker compose down
+
+# Wipe everything including data volumes
+docker compose down -v
+```
+
+---
+
 ## Quick Start — Linux
 
 ```bash

@@ -1,0 +1,259 @@
+# docker-compose.yml
+# Single-server Docker deployment of the Threat Hunting Lab.
+# Runs Elasticsearch, Kibana, Fleet Server, MITRE Caldera, LocalStack,
+# and Filebeat on one Ubuntu host.
+#
+# Usage:
+#   cp .env.example .env   # edit passwords/token
+#   docker compose up -d
+#   docker compose logs -f bootstrap   # watch first-run setup
+#
+# The Windows 11 victim VM (win11-victim) still needs to be provisioned
+# separately with Vagrant, pointing at this host's IP for Fleet enrollment.
+
+version: "3.8"
+
+# ── Shared network ────────────────────────────────────────────────────────────
+networks:
+  hunt_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+# ── Named volumes ─────────────────────────────────────────────────────────────
+volumes:
+  esdata:
+  kibana_data:
+  caldera_data:
+  localstack_data:
+
+services:
+
+  # ── Elasticsearch ───────────────────────────────────────────────────────────
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.19.14}
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      - cluster.name=hunt-lab
+      - node.name=elasticsearch
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?ELASTIC_PASSWORD is required}
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - ES_JAVA_OPTS=-Xms${ES_HEAP:-2g} -Xmx${ES_HEAP:-2g}
+      - path.data=/usr/share/elasticsearch/data
+      - path.logs=/usr/share/elasticsearch/logs
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health | grep -qv '\"status\":\"red\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # ── Kibana ──────────────────────────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-8.19.14}
+    container_name: kibana
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_NAME=hunt-lab-kibana
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_SYSTEM_PASSWORD:?KIBANA_SYSTEM_PASSWORD is required}
+      - XPACK_FLEET_ENABLED=true
+      - XPACK_FLEET_PACKAGES=[{"name":"fleet_server","version":"latest"},{"name":"system","version":"latest"},{"name":"elastic_agent","version":"latest"},{"name":"windows","version":"latest"}]
+    ports:
+      - "5601:5601"
+    volumes:
+      - kibana_data:/usr/share/kibana/data
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.11
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -u elastic:${ELASTIC_PASSWORD} http://localhost:5601/api/status | grep -q 'available'"]
+      interval: 15s
+      timeout: 10s
+      retries: 24
+      start_period: 90s
+
+  # ── Bootstrap (one-shot) ────────────────────────────────────────────────────
+  # Runs once after Elasticsearch + Kibana are healthy:
+  #   - Resets kibana_system password
+  #   - Creates Fleet Server service token
+  #   - Configures Fleet outputs / policies
+  #   - Fetches Windows enrollment token → writes to ./fleet-enrollment-token.txt
+  # Exits 0 on success; a non-zero exit is surfaced by `docker compose logs bootstrap`.
+  bootstrap:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.19.14}
+    container_name: bootstrap
+    restart: "no"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_SYSTEM_PASSWORD=${KIBANA_SYSTEM_PASSWORD}
+      - HOST_IP=${HOST_IP:?HOST_IP is required — set to the Ubuntu host LAN IP}
+      - ELASTIC_VERSION=${ELASTIC_VERSION:-8.19.14}
+    volumes:
+      - ./bootstrap:/bootstrap:ro
+      - .:/workspace         # writes fleet-enrollment-token.txt to repo root
+    entrypoint: ["bash", "/bootstrap/bootstrap.sh"]
+    networks:
+      - hunt_net
+
+  # ── Fleet Server ────────────────────────────────────────────────────────────
+  # Depends on bootstrap having written the service token.
+  # The service token is passed in via FLEET_SERVER_SERVICE_TOKEN env var, which
+  # is set from the .env file (bootstrap.sh writes it there after creation).
+  fleet-server:
+    image: docker.elastic.co/beats/elastic-agent:${ELASTIC_VERSION:-8.19.14}
+    container_name: fleet-server
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    environment:
+      - FLEET_SERVER_ENABLE=1
+      - FLEET_SERVER_HOST=0.0.0.0
+      - FLEET_SERVER_PORT=8220
+      - FLEET_SERVER_ELASTICSEARCH_HOST=http://elasticsearch:9200
+      - FLEET_SERVER_SERVICE_TOKEN=${FLEET_SERVER_SERVICE_TOKEN:?Run bootstrap first: docker compose run bootstrap}
+      - FLEET_SERVER_POLICY_ID=fleet-server-policy
+      - KIBANA_FLEET_HOST=http://kibana:5601
+      - FLEET_INSECURE=true
+    ports:
+      - "8220:8220"
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.12
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8220/api/status | grep -q 'HEALTHY'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # ── MITRE Caldera ───────────────────────────────────────────────────────────
+  caldera:
+    image: ghcr.io/mitre/caldera:5.0.0
+    container_name: caldera
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+      - "7010:7010"
+      - "7011:7011/udp"
+      - "7012:7012"
+    volumes:
+      - ./config/caldera/local.yml:/usr/src/app/conf/local.yml:ro
+      - caldera_data:/usr/src/app/data
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.30
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8888/api/v2/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ── LocalStack ──────────────────────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:${LOCALSTACK_VERSION:-3.4}
+    container_name: localstack
+    restart: unless-stopped
+    environment:
+      - SERVICES=s3,iam,lambda,sts,cloudwatch,ec2
+      - DEFAULT_REGION=us-east-1
+      - EAGER_SERVICE_LOADING=1
+      - DEBUG=0
+      - DATA_DIR=/var/lib/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    volumes:
+      - localstack_data:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.40
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── CloudTrail activity generator ──────────────────────────────────────────
+  # A minimal Python/awslocal container that seeds baseline resources on first
+  # run, then emits CloudTrail-formatted events every 60 seconds for Filebeat.
+  cloudtrail-gen:
+    image: python:3.11-slim
+    container_name: cloudtrail-gen
+    restart: unless-stopped
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - CLOUDTRAIL_LOG_DIR=/cloudtrail
+    volumes:
+      - ./cloudtrail:/cloudtrail
+      - ./bootstrap/generate_cloudtrail_activity.sh:/generate_cloudtrail_activity.sh:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        pip install -q awscli-local awslocal 2>/dev/null
+        # Seed once, then loop every 60s
+        while true; do
+          bash /generate_cloudtrail_activity.sh
+          sleep 60
+        done
+    networks:
+      - hunt_net
+
+  # ── Filebeat ────────────────────────────────────────────────────────────────
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-8.19.14}
+    container_name: filebeat
+    user: root
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    volumes:
+      - ./config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./cloudtrail:/var/log/localstack/cloudtrail:ro
+    command: ["filebeat", "-e", "-strict.perms=false"]
+    networks:
+      - hunt_net
