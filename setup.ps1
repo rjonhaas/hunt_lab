@@ -4,10 +4,11 @@
     Bootstrap script for the Threat Hunting Lab (Windows host).
 .DESCRIPTION
     Installs all prerequisites (Vagrant, vagrant-vmware-utility, vagrant-vmware-desktop
-    plugin) if missing, then provisions three VMs in the correct order:
+        plugin) if missing, then provisions four VMs in the correct order:
       1. elastic-siem  (Elasticsearch + Kibana + Fleet Server)
       2. caldera       (MITRE Caldera C2)
-      3. win11-victim  (Windows 11 + Sysmon + Elastic Agent)
+            3. cloud-sim     (LocalStack + CloudTrail + Filebeat)
+            4. win11-victim  (Windows 11 + Sysmon + Elastic Agent)
 
     Only prerequisite requiring manual install beforehand:
       VMware Workstation Pro 17+

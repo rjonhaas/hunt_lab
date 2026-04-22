@@ -1,6 +1,6 @@
 # Threat Hunting Lab — Elastic SIEM + MITRE Caldera + Local Cloud + Windows 11
 
-A self-contained threat hunting lab provisioned automatically with a single script. It brings up four VMs: an Elastic SIEM stack, a MITRE Caldera C2 server, a LocalStack-based local cloud simulator, and a Windows 11 victim endpoint with Sysmon and an Elastic Agent pre-enrolled in Fleet. The Windows bootstrap also imports a reusable Kibana threat hunting dashboard template.
+A self-contained VMware/Vagrant threat hunting lab that provisions four VMs: an Elastic SIEM stack, a MITRE Caldera C2 server, a LocalStack-based local cloud simulator, and a Windows 11 victim endpoint with Sysmon and an Elastic Agent pre-enrolled in Fleet. On Windows, the bootstrap also imports a reusable Kibana threat hunting dashboard template and loads the Hunt Lab Caldera content automatically.
 
 ---
 
@@ -123,9 +123,11 @@ bash setup.sh
 2. Downloads and installs `vagrant-vmware-utility` (`.deb`) and enables the systemd service
 3. Installs the `vagrant-vmware-desktop` Vagrant plugin
 4. Downloads the Windows 11 Vagrant box (~8–12 GB on first run)
-5. Provisions `elastic-siem` → imports the Kibana hunt template → `caldera` → `cloud-sim` → `win11-victim`
+5. Provisions `elastic-siem` → `caldera` → `cloud-sim` → `win11-victim`
 
 **First-run time: 25–40 minutes** (mostly network downloads).
+
+Linux note: `setup.sh` provisions the VMs only. The automatic Kibana template import and Caldera content load happen in the Windows bootstrap path.
 
 ---
 
@@ -146,6 +148,8 @@ cd C:\path\to\hunt_lab
 3. Installs the `vagrant-vmware-desktop` Vagrant plugin
 4. Downloads the Windows 11 Vagrant box (~8–12 GB on first run)
 5. Provisions `elastic-siem` → imports the Kibana hunt template → `caldera` → loads Caldera abilities → `cloud-sim` → `win11-victim`
+
+If a provisioning step fails, rerun just that machine with `vagrant up <vm-name> --provision` or `vagrant provision <vm-name>`.
 
 ---
 
