@@ -151,10 +151,24 @@ log "Installing elastic-agent ${ELASTIC_VERSION}..."
 apt-get install -y -qq elastic-agent=${ELASTIC_VERSION}
 
 log "Creating Fleet Server service token..."
-SERVICE_TOKEN=$(curl -s -X POST \
+# Delete any pre-existing token so re-provisioning is idempotent
+curl -s -X DELETE \
   -u "elastic:${ELASTIC_PASSWORD}" \
   "http://localhost:${ES_PORT}/_security/service/elastic/fleet-server/credential/token/fleet-server-token-1" \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['token']['value'])")
+  > /dev/null 2>&1 || true
+
+TOKEN_RESPONSE=$(curl -s -X POST \
+  -u "elastic:${ELASTIC_PASSWORD}" \
+  "http://localhost:${ES_PORT}/_security/service/elastic/fleet-server/credential/token/fleet-server-token-1")
+SERVICE_TOKEN=$(echo "${TOKEN_RESPONSE}" \
+  | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+if 'token' not in d:
+    sys.stderr.write('[elastic] ERROR: token creation failed: ' + json.dumps(d) + '\n')
+    sys.exit(1)
+print(d['token']['value'])
+")
 
 log "Enrolling elastic-agent as Fleet Server..."
 /usr/share/elastic-agent/bin/elastic-agent enroll \
