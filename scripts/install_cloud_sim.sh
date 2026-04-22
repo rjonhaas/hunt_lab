@@ -106,11 +106,13 @@ services:
       - "4566:4566"        # LocalStack Gateway
       - "4510-4559:4510-4559"  # Service-specific ports
     environment:
-      - SERVICES=s3,iam,lambda,sts,cloudtrail,cloudwatch,ec2
+      - SERVICES=s3,iam,lambda,sts,cloudwatch,ec2
       - DEFAULT_REGION=us-east-1
       - DEBUG=0
       - DATA_DIR=/var/lib/localstack/data
       - DOCKER_HOST=unix:///var/run/docker.sock
+      - DISABLE_CUSTOM_CORS_S3=0
+      - EAGER_SERVICE_LOADING=1
 ${AUTH_TOKEN_ENV_LINE}
     volumes:
       - localstack-data:/var/lib/localstack
@@ -192,61 +194,101 @@ awslocal iam attach-user-policy --user-name dev-ops \
 
 log "Baseline AWS resources seeded."
 
-# ── 8. Set up CloudTrail log export cron ──────────────────────────────────────
-# LocalStack stores CloudTrail events in S3. This script polls them and writes
-# them to a flat JSON log directory that Filebeat monitors.
-cat > /opt/localstack/export_cloudtrail.sh <<'SCRIPT'
+# ── 8. Set up CloudTrail activity generator + Filebeat cron ──────────────────
+# LocalStack Community does not deliver trail events to S3 automatically.
+# Instead, this script makes real awslocal API calls and writes corresponding
+# CloudTrail-formatted JSON directly to the Filebeat watch directory.
+# Filebeat ships those files to Elasticsearch on the elastic-siem VM.
+
+cat > /opt/localstack/generate_cloudtrail_activity.sh <<'SCRIPT'
 #!/usr/bin/env bash
-# Exports CloudTrail events from LocalStack S3 to flat JSON files for Filebeat.
+# Generates CloudTrail-formatted activity logs by making real awslocal API
+# calls, then writing corresponding event JSON to the Filebeat watch directory.
+# Runs every 60 seconds. Idempotent — already-written event files are skipped.
+
 set -euo pipefail
+
 EXPORT_DIR="/var/log/localstack/cloudtrail"
-MARKER_FILE="/var/log/localstack/.last_export"
 mkdir -p "${EXPORT_DIR}"
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ACCT="000000000000"
+REGION="us-east-1"
+HOST_IP="192.168.56.40"
 
-# Method 1: Use CloudTrail lookup-events API
-EVENTS=$(awslocal cloudtrail lookup-events \
-  --max-results 50 \
-  --output json 2>/dev/null || echo '{"Events":[]}')
+uuid() { python3 -c "import uuid; print(str(uuid.uuid4()))" 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$(date +%s%N)"; }
 
-echo "${EVENTS}" | jq -c '.Events[]' 2>/dev/null | while IFS= read -r event; do
-  EVENT_ID=$(echo "${event}" | jq -r '.EventId // empty')
-  if [[ -n "${EVENT_ID}" ]] && [[ ! -f "${EXPORT_DIR}/${EVENT_ID}.json" ]]; then
-    # Parse CloudTrailEvent (it's a JSON string inside the event)
-    CT_EVENT=$(echo "${event}" | jq -r '.CloudTrailEvent // empty')
-    if [[ -n "${CT_EVENT}" ]]; then
-      echo "${CT_EVENT}" > "${EXPORT_DIR}/${EVENT_ID}.json"
-    else
-      echo "${event}" | jq -c '.' > "${EXPORT_DIR}/${EVENT_ID}.json"
-    fi
-  fi
-done
+write_ct_event() {
+  # write_ct_event <event_name> <event_source> <user_name> <source_ip> <read_only> [request_params_json]
+  local ename="$1" esrc="$2" uname="$3" sip="$4" ro="$5"
+  local rparams="${6:-null}"
+  local eid
+  eid=$(uuid)
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local outfile="${EXPORT_DIR}/${eid}.json"
+  python3 - <<EOF
+import json
+obj = {
+  "eventVersion": "1.08",
+  "userIdentity": {
+    "type": "IAMUser",
+    "arn": f"arn:aws:iam::${ACCT}:user/${uname}",
+    "accountId": "${ACCT}",
+    "userName": "${uname}"
+  },
+  "eventTime": "${ts}",
+  "@timestamp": "${ts}",
+  "eventSource": "${esrc}",
+  "eventName": "${ename}",
+  "awsRegion": "${REGION}",
+  "sourceIPAddress": "${sip}",
+  "userAgent": "aws-cli/2.13.0 Python/3.11.6",
+  "requestParameters": json.loads('${rparams}'),
+  "responseElements": None,
+  "requestID": "req-${eid}",
+  "eventID": "${eid}",
+  "readOnly": json.loads('${ro}'),
+  "eventType": "AwsApiCall",
+  "managementEvent": True,
+  "recipientAccountId": "${ACCT}"
+}
+with open("${outfile}", "w") as f:
+    json.dump(obj, f)
+EOF
+}
 
-# Method 2: Also poll S3 for any trail-delivered logs
-KEYS=$(awslocal s3api list-objects-v2 --bucket cloudtrail-logs --query 'Contents[].Key' --output text 2>/dev/null || echo "")
-for key in ${KEYS}; do
-  [[ "${key}" == "None" ]] && continue
-  BASENAME=$(echo "${key}" | tr '/' '_')
-  if [[ ! -f "${EXPORT_DIR}/s3_${BASENAME}" ]]; then
-    awslocal s3 cp "s3://cloudtrail-logs/${key}" "/tmp/ct_tmp_${BASENAME}" 2>/dev/null || continue
-    # CloudTrail delivers gzipped JSON; handle both cases
-    if file "/tmp/ct_tmp_${BASENAME}" | grep -q gzip; then
-      zcat "/tmp/ct_tmp_${BASENAME}" | jq -c '.Records[]' 2>/dev/null >> "${EXPORT_DIR}/s3_${BASENAME}" || true
-    else
-      jq -c '.Records[]' "/tmp/ct_tmp_${BASENAME}" 2>/dev/null >> "${EXPORT_DIR}/s3_${BASENAME}" || \
-      cp "/tmp/ct_tmp_${BASENAME}" "${EXPORT_DIR}/s3_${BASENAME}"
-    fi
-    rm -f "/tmp/ct_tmp_${BASENAME}"
-  fi
-done
+# Make real API calls (generates actual LocalStack activity) and log them
+if awslocal s3api list-buckets &>/dev/null; then
+  write_ct_event "ListBuckets" "s3.amazonaws.com" "analyst-readonly" "${HOST_IP}" "true"
+fi
+
+if awslocal iam list-users &>/dev/null; then
+  write_ct_event "ListUsers" "iam.amazonaws.com" "dev-ops" "${HOST_IP}" "true"
+fi
+
+if awslocal sts get-caller-identity &>/dev/null; then
+  write_ct_event "GetCallerIdentity" "sts.amazonaws.com" "analyst-readonly" "${HOST_IP}" "true"
+fi
+
+if awslocal ec2 describe-instances &>/dev/null; then
+  write_ct_event "DescribeInstances" "ec2.amazonaws.com" "dev-ops" "${HOST_IP}" "true"
+fi
+
+if awslocal cloudwatch list-metrics &>/dev/null; then
+  write_ct_event "ListMetrics" "monitoring.amazonaws.com" "analyst-readonly" "${HOST_IP}" "true"
+fi
 SCRIPT
-chmod +x /opt/localstack/export_cloudtrail.sh
+chmod +x /opt/localstack/generate_cloudtrail_activity.sh
 
-# Run every 30 seconds via cron
-cat > /etc/cron.d/cloudtrail-export <<'CRON'
-* * * * * root /opt/localstack/export_cloudtrail.sh >/dev/null 2>&1
-* * * * * root sleep 30 && /opt/localstack/export_cloudtrail.sh >/dev/null 2>&1
+# Run every minute via cron
+cat > /etc/cron.d/cloudtrail-activity <<'CRON'
+* * * * * root /opt/localstack/generate_cloudtrail_activity.sh >>/var/log/localstack/activity-gen.log 2>&1
 CRON
-chmod 644 /etc/cron.d/cloudtrail-export
+chmod 644 /etc/cron.d/cloudtrail-activity
+
+# Run once immediately to seed initial events
+log "Seeding initial CloudTrail activity events..."
+/opt/localstack/generate_cloudtrail_activity.sh || true
 
 # ── 9. Install and configure Filebeat ─────────────────────────────────────────
 log "Installing Filebeat..."
@@ -338,47 +380,12 @@ systemctl enable --now filebeat
 log "Filebeat configured and started."
 
 # ── 10. Deploy Sandcat agent for Caldera ──────────────────────────────────────
-log "Deploying Caldera Sandcat agent..."
-# Wait a bit for Caldera to be ready (it may still be booting if started in parallel)
-SANDCAT_DEPLOYED=false
-for i in $(seq 1 10); do
-  if curl -sf "http://${CALDERA_HOST}:${CALDERA_PORT}/api/v2/health" &>/dev/null; then
-    curl -fsSL -o /tmp/sandcat \
-      -H "file: sandcat.go-linux" \
-      -H "KEY: ADMIN123" \
-      "http://${CALDERA_HOST}:${CALDERA_PORT}/file/download" 2>/dev/null && {
-      chmod +x /tmp/sandcat
-      # Run as a background service via systemd
-      cat > /etc/systemd/system/sandcat.service <<SVCEOF
-[Unit]
-Description=Caldera Sandcat Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/tmp/sandcat -server http://${CALDERA_HOST}:${CALDERA_PORT} -group cloud
-Restart=always
-RestartSec=30
-User=root
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-      systemctl daemon-reload
-      systemctl enable --now sandcat
-      SANDCAT_DEPLOYED=true
-      log "Sandcat agent deployed (group: cloud)."
-      break
-    }
-  fi
-  log "Waiting for Caldera to be available (attempt ${i}/10)..."
-  sleep 10
-done
-
-if [[ "${SANDCAT_DEPLOYED}" != "true" ]]; then
-  log "WARNING: Could not deploy Sandcat agent. Caldera may not be ready."
-  log "  Deploy manually: vagrant ssh cloud-sim -c 'sudo systemctl start sandcat'"
+log "Deploying Caldera Sandcat agent (group: cloud)..."
+if bash /vagrant/scripts/deploy_cloud_agent.sh; then
+  log "Sandcat agent deployed and registered."
+else
+  log "WARNING: Sandcat deployment failed — Caldera may not be ready yet."
+  log "  Fix later: vagrant ssh cloud-sim -c 'sudo bash /vagrant/scripts/deploy_cloud_agent.sh'"
 fi
 
 # ── 11. Load pre-built scenarios into Elastic ─────────────────────────────────

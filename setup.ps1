@@ -288,10 +288,83 @@ Write-Log "Step 1/4 - elastic-siem (Elasticsearch + Kibana + Fleet)..."
 if ($LASTEXITCODE -ne 0) { Write-Die "elastic-siem provisioning failed. Check the output above for details." }
 Write-Ok "elastic-siem is up."
 
+# --- Import Kibana threat hunt report template ---
+$KibanaUrl     = "http://192.168.56.10:5601"
+$CredsFile     = Join-Path $PSScriptRoot "elastic-credentials.txt"
+$TemplateNdjson = Join-Path $PSScriptRoot "kibana\hunt_report_template.ndjson"
+
+if (Test-Path $TemplateNdjson) {
+    Write-Log "Importing Kibana Threat Hunt Report Template..."
+
+    # Parse credentials (format: user:password)
+    $RawCreds = if (Test-Path $CredsFile) { (Get-Content $CredsFile -Raw).Trim() } else { "elastic:changeme" }
+    $ColonIdx = $RawCreds.IndexOf(":")
+    $KibUser  = $RawCreds.Substring(0, $ColonIdx)
+    $KibPass  = $RawCreds.Substring($ColonIdx + 1)
+    $B64Creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${KibUser}:${KibPass}"))
+
+    # Wait for Kibana to be available (up to 3 minutes)
+    $KibReady  = $false
+    $Deadline  = (Get-Date).AddMinutes(3)
+    Write-Log "  Waiting for Kibana API to become available..."
+    while ((Get-Date) -lt $Deadline) {
+        try {
+            $resp = Invoke-WebRequest -Uri "$KibanaUrl/api/status" `
+                -Headers @{Authorization = "Basic $B64Creds"} `
+                -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            if ($resp.StatusCode -eq 200) { $KibReady = $true; break }
+        } catch { }
+        Start-Sleep -Seconds 5
+    }
+
+    if (-not $KibReady) {
+        Write-Warn "Kibana did not become available within 3 minutes. Skipping template import."
+        Write-Warn "  Run manually later:  scripts\import_kibana_template.ps1"
+    } else {
+        try {
+            # curl is available on Windows 10 1803+ and handles multipart/form-data correctly
+            $result = & curl.exe -s --max-time 30 `
+                -u "${KibUser}:${KibPass}" `
+                -X POST "$KibanaUrl/api/saved_objects/_import?overwrite=true" `
+                -H "kbn-xsrf: true" `
+                -F "file=@`"$TemplateNdjson`"" 2>&1
+
+            $parsed = $result | ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($parsed -and $parsed.success -eq $true) {
+                Write-Ok "  Threat Hunt Report Template imported ($($parsed.successCount) objects)."
+            } elseif ($parsed -and $parsed.errors) {
+                Write-Warn "  Template import had errors: $($parsed.errors | ConvertTo-Json -Compress)"
+            } else {
+                Write-Warn "  Template import returned unexpected response: $result"
+            }
+        } catch {
+            Write-Warn "  Template import failed: $_"
+            Write-Warn "  Run manually later:  scripts\import_kibana_template.ps1"
+        }
+    }
+} else {
+    Write-Warn "Template file not found at $TemplateNdjson — skipping import."
+}
+
 Write-Log "Step 2/4 - caldera (MITRE Caldera C2)..."
 & $vagrantExe up caldera --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "caldera provisioning failed. Check the output above for details." }
 Write-Ok "caldera is up."
+
+# --- Load Hunt Lab abilities and adversary into Caldera ---
+Write-Log "Loading Hunt Lab cloud-attack abilities into Caldera..."
+$CalderaSetup = Join-Path $PSScriptRoot "scripts\caldera_setup.py"
+if ((Test-Path $CalderaSetup) -and (Get-Command python -ErrorAction SilentlyContinue)) {
+    try {
+        $output = & python $CalderaSetup 2>&1
+        $output | ForEach-Object { Write-Log "  $_" }
+        Write-Ok "Caldera abilities loaded."
+    } catch {
+        Write-Warn "Caldera setup failed: $_ — run manually: python scripts\caldera_setup.py"
+    }
+} else {
+    Write-Warn "caldera_setup.py or python not found — run manually after setup: python scripts\caldera_setup.py"
+}
 
 Write-Log "Step 3/4 - cloud-sim (LocalStack + CloudTrail + Filebeat)..."
 & $vagrantExe up cloud-sim --provision

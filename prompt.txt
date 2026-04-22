@@ -1,0 +1,244 @@
+You are working inside my local repo and you have access to my local Kibana instance and filesystem.
+
+Your goal is to build a **portable Kibana Threat Hunt Report template** for my `hunt_lab` project, validate that it imports cleanly, and make the result safe for automated loading from `setup.ps1`.
+
+## Objective
+
+Create a reusable Kibana saved object package that provides an **Interactive Threat Hunt Report Template** for users of Hunt Lab.
+
+The final output should include:
+
+1. A Kibana dashboard named:
+
+   `HL - Threat Hunt Report Template`
+
+2. A saved objects export file at:
+
+   `kibana/hunt_report_template.ndjson`
+
+3. Supporting documentation at:
+
+   `kibana/README.md`
+
+4. If needed, an updated `setup.ps1` that imports the template during environment setup.
+
+## Important constraints
+
+Treat Kibana saved objects as brittle.
+
+Do **not** handwave around object IDs, references, data view dependencies, or import compatibility.
+
+Your job is to compensate for all of that by actually checking and fixing things.
+
+## Required behavior
+
+Follow this workflow exactly:
+
+### Phase 1: Inspect the environment
+
+* Detect the Kibana version.
+* Detect whether authentication is required and use the available local credentials or environment variables if present.
+* Determine whether a suitable data view already exists.
+* Identify the most appropriate data view strategy for portability.
+
+Preferred default:
+
+* A generic data view named `Hunt Lab Logs`
+* Using a title such as `logs-*` if appropriate for the local environment
+
+If a better local pattern exists and is clearly more appropriate, document the decision.
+
+### Phase 2: Build the dashboard in Kibana properly
+
+Create a dashboard called:
+
+`HL - Threat Hunt Report Template`
+
+The dashboard should be an **interactive report template**, not just a blank dashboard.
+
+It should include these sections:
+
+#### Section 1 — Hunt Summary
+
+Markdown or text panel with placeholders for:
+
+* Scenario
+* Analyst
+* Date range
+* Hypothesis
+* Scope
+
+#### Section 2 — Key Metrics
+
+Use visualizations only if they can be made portable against the chosen data view.
+Potential metrics:
+
+* Hosts involved
+* Users involved
+* Total events
+* Suspicious events
+
+If visualizations create portability problems, fall back to text placeholders and explain why.
+
+#### Section 3 — Evidence Panels
+
+Try to include portable evidence panels using common ECS fields only, such as:
+
+* `@timestamp`
+* `host.name`
+* `user.name`
+* `event.category`
+* `event.code`
+* `process.name`
+* `process.command_line`
+* `process.parent.name`
+* `destination.ip`
+* `destination.domain`
+
+Suggested evidence sections:
+
+* Process execution review
+* Authentication or account activity
+* Activity over time
+* Network destinations
+
+If the local data does not support these reliably, create a version that still imports cleanly and document what fields are assumed.
+
+#### Section 4 — Findings
+
+Markdown/text panel with placeholders for:
+
+* Observations
+* Suspicious indicators
+
+#### Section 5 — Assessment
+
+Markdown/text panel with placeholders for:
+
+* Verdict
+* Why
+* Recommended actions
+
+#### Section 6 — Detection Opportunities
+
+Markdown/text panel with placeholders for follow-on detection ideas.
+
+### Phase 3: Export safely
+
+Export the dashboard and all required dependent saved objects into:
+
+`kibana/hunt_report_template.ndjson`
+
+Requirements:
+
+* Include all required references
+* Ensure the NDJSON is valid for re-import
+* Do not leave dangling references
+* Avoid unnecessary saved objects if possible
+
+### Phase 4: Validate imports end-to-end
+
+This is mandatory.
+
+You must verify the export works by testing import behavior, not by assumption.
+
+Do at least one of the following:
+
+* Import into a clean space
+* Delete and re-import into a test space
+* Use a temporary copy to validate all references resolve
+
+Validation requirements:
+
+* The import succeeds
+* The dashboard opens successfully
+* No missing-reference errors
+* No broken panels
+* The data view dependency is handled intentionally
+
+If import fails, fix the root cause and repeat until it works.
+
+### Phase 5: Make setup automation ready
+
+Review or update `setup.ps1` so it can import the saved objects automatically.
+
+It should:
+
+* Check Kibana availability
+* Handle authentication cleanly
+* Import `kibana/hunt_report_template.ndjson`
+* Avoid unsafe assumptions where possible
+* Log useful status messages
+
+If an existing `setup.ps1` already does this, improve it only as needed.
+
+### Phase 6: Document the result
+
+Create or update:
+
+`kibana/README.md`
+
+Include:
+
+* What the template is
+* What it installs
+* Assumed data view and fields
+* How `setup.ps1` imports it
+* How a user should duplicate the template for a new hunt
+* Any portability caveats
+* Supported Kibana version notes if relevant
+
+## Portability rules
+
+Optimize for portability across user environments.
+
+Use these principles:
+
+* Prefer common ECS fields
+* Keep the object set minimal
+* Prefer one known data view over many environment-specific references
+* Avoid brittle dependencies unless you validate them
+* If Lens panels make portability too fragile, use a simpler validated version rather than a fancier broken one
+* A smaller template that works is better than a richer one that fails import
+
+## Deliverables
+
+When finished, provide a concise summary in the terminal or output notes that includes:
+
+* Kibana version detected
+* Data view chosen
+* Files created or modified
+* Validation method used
+* Whether the template imported cleanly
+* Any remaining caveats
+
+## Working style
+
+Be implementation-focused.
+Do not just describe what should be done.
+Actually do it in the repo and in Kibana.
+
+If you hit brittleness with saved objects:
+
+* inspect the exported NDJSON
+* inspect object references
+* test import behavior
+* correct the issue
+* re-export if necessary
+
+Do not stop at “this should work.”
+Only stop once the template has been validated.
+
+## Project framing
+
+This is for a project called Hunt Lab.
+
+The template should feel like a **real threat hunt reporting framework inside Kibana**, not a generic dashboard.
+
+Name and wording should consistently use:
+
+* Hunt Lab
+* Threat Hunt Report
+* Interactive Threat Hunt Report Template
+
+If you need placeholder Markdown content, use professional threat hunting language suitable for DFIR and detection engineering workflows.
