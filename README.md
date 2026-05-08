@@ -1,43 +1,54 @@
-# Threat Hunting Lab — Elastic SIEM + MITRE Caldera + Local Cloud + Windows 11
+# Threat Hunting Lab — Elastic SIEM + MITRE Caldera + Local Cloud + Windows Domain
 
-A self-contained VMware/Vagrant threat hunting lab that provisions four VMs: an Elastic SIEM stack, a MITRE Caldera C2 server, a LocalStack-based local cloud simulator, and a Windows 11 victim endpoint with Sysmon and an Elastic Agent pre-enrolled in Fleet. On Windows, the bootstrap also imports a reusable Kibana threat hunting dashboard template and loads the Hunt Lab Caldera content automatically.
+A self-contained VMware/Vagrant threat hunting lab that provisions six VMs: an Elastic SIEM stack, a MITRE Caldera C2 server, a LocalStack-based local cloud simulator, a Windows 11 victim endpoint, an Active Directory domain controller (`lab.local`), and a domain member server — all with Sysmon and Elastic Agent pre-enrolled in Fleet. On Windows, the bootstrap also imports a reusable Kibana threat hunting dashboard template and loads the Hunt Lab Caldera content automatically.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                Host-Only Network: 192.168.56.0/24            │
-│                                                              │
-│  ┌──────────────────┐  ┌──────────────┐  ┌───────────────┐  │
-│  │  elastic-siem    │  │ win11-victim │  │   caldera     │  │
-│  │  192.168.56.10   │◄─│192.168.56.20 │─►│192.168.56.30  │  │
-│  │                  │  │              │  │               │  │
-│  │  Elasticsearch   │  │  Windows 11  │  │  MITRE        │  │
-│  │  Kibana          │  │  Sysmon      │  │  Caldera 5.x  │  │
-│  │  Fleet Server    │  │  Elastic     │  │  (Docker)     │  │
-│  │                  │  │  Agent       │  │               │  │
-│  └──────────────────┘  └──────────────┘  └───────────────┘  │
-│                                                              │
-│                     ┌──────────────────┐                     │
-│                     │    cloud-sim     │                     │
-│                     │  192.168.56.40   │                     │
-│                     │  LocalStack      │                     │
-│                     │  CloudTrail logs │                     │
-│                     │  Filebeat        │                     │
-│                     └──────────────────┘                     │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Host-Only Network: 192.168.56.0/24                   │
+│                                                                         │
+│  ┌──────────────────┐  ┌─────────────────┐  ┌──────────────────────┐   │
+│  │  elastic-siem    │  │    win-dc        │  │      win-server      │   │
+│  │  192.168.56.10   │◄─│  192.168.56.50   │  │    192.168.56.51     │   │
+│  │                  │  │                  │  │                      │   │
+│  │  Elasticsearch   │  │  Windows Server  │  │  Windows Server 2022 │   │
+│  │  Kibana          │  │  2022            │  │  Domain member       │   │
+│  │  Fleet Server    │  │  AD DS / DNS     │  │  Sysmon              │   │
+│  │                  │  │  lab.local DC    │  │  Elastic Agent       │   │
+│  └──────────────────┘  │  Sysmon          │  └──────────────────────┘   │
+│                        │  Elastic Agent   │                              │
+│  ┌──────────────────┐  └─────────────────┘  ┌──────────────────────┐   │
+│  │  win11-victim    │                        │      caldera         │   │
+│  │  192.168.56.20   │──────────────────────► │    192.168.56.30     │   │
+│  │                  │                        │                      │   │
+│  │  Windows 11      │                        │  MITRE Caldera 5.x   │   │
+│  │  Sysmon          │                        │  (Docker)            │   │
+│  │  Elastic Agent   │                        │                      │   │
+│  │  (opt: lab.local)│                        └──────────────────────┘   │
+│  └──────────────────┘                                                   │
+│                           ┌──────────────────┐                          │
+│                           │    cloud-sim     │                          │
+│                           │  192.168.56.40   │                          │
+│                           │  LocalStack      │                          │
+│                           │  CloudTrail logs │                          │
+│                           │  Filebeat        │                          │
+│                           └──────────────────┘                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### VM Inventory
 
-| VM Name        | IP             | OS           | RAM  | CPUs | Role                                      |
-|----------------|----------------|--------------|------|------|-------------------------------------------|
-| `elastic-siem` | 192.168.56.10  | Ubuntu 22.04 | 8 GB | 4    | Elasticsearch + Kibana + Fleet            |
-| `win11-victim` | 192.168.56.20  | Windows 11   | 4 GB | 2    | Monitored endpoint                        |
-| `caldera`      | 192.168.56.30  | Ubuntu 22.04 | 4 GB | 2    | MITRE Caldera C2 + sandcat agent          |
-| `cloud-sim`    | 192.168.56.40  | Ubuntu 22.04 | 4 GB | 2    | LocalStack + CloudTrail log shipper       |
+| VM Name        | IP             | OS                  | RAM  | CPUs | Role                                      |
+|----------------|----------------|---------------------|------|------|-------------------------------------------|
+| `elastic-siem` | 192.168.56.10  | Ubuntu 22.04        | 8 GB | 4    | Elasticsearch + Kibana + Fleet            |
+| `win11-victim` | 192.168.56.20  | Windows 11          | 4 GB | 2    | Victim endpoint (optionally domain-joined)|
+| `caldera`      | 192.168.56.30  | Ubuntu 22.04        | 4 GB | 2    | MITRE Caldera C2 + sandcat agent          |
+| `cloud-sim`    | 192.168.56.40  | Ubuntu 22.04        | 4 GB | 2    | LocalStack + CloudTrail log shipper       |
+| `win-dc`       | 192.168.56.50  | Windows Server 2022 | 4 GB | 2    | Active Directory DC + DNS (`lab.local`)   |
+| `win-server`   | 192.168.56.51  | Windows Server 2022 | 2 GB | 2    | Domain member server                      |
 
 ---
 
@@ -45,10 +56,12 @@ A self-contained VMware/Vagrant threat hunting lab that provisions four VMs: an 
 
 | Resource | Minimum | Recommended |
 |----------|---------|-------------|
-| RAM      | 20 GB free | 24 GB free |
-| CPU      | 6 cores | 8+ cores |
-| Disk     | 150 GB free | 200 GB free |
+| RAM      | 30 GB free | 36 GB free |
+| CPU      | 8 cores | 12+ cores |
+| Disk     | 200 GB free | 300 GB free |
 | OS       | Windows 10/11 or Linux | — |
+
+> **Note:** The two Windows Server 2022 VMs add ~6 GB RAM to the previous 20 GB baseline. If you don't need the Active Directory domain, you can bring up only the original four VMs: `vagrant up elastic-siem caldera cloud-sim win11-victim`.
 
 **Required software (install manually before running the setup script):**
 
@@ -66,26 +79,32 @@ The setup script installs the `vagrant-vmware-utility` service and the `vagrant-
 ```
 hunt_lab/
 ├── kibana/
-│   ├── README.md                    # Hunt dashboard/template details and manual import steps
-│   ├── create_all_objects.py        # Create saved objects in Kibana via API
-│   ├── generate_template.py         # Regenerate the dashboard/template NDJSON
-│   └── hunt_report_template.ndjson  # Importable Kibana saved objects export
-├── setup.sh                       # Linux quick-start (run this first)
-├── setup.ps1                      # Windows quick-start (run this first)
-├── Vagrantfile                    # Defines the four lab VMs
+│   ├── README.md                       # Hunt dashboard/template details and manual import steps
+│   ├── create_all_objects.py           # Create saved objects in Kibana via API
+│   ├── generate_template.py            # Regenerate the dashboard/template NDJSON
+│   └── hunt_report_template.ndjson     # Importable Kibana saved objects export
+├── setup.sh                          # Linux quick-start (run this first)
+├── setup.ps1                         # Windows quick-start (run this first)
+├── Vagrantfile                       # Defines all six lab VMs
 └── scripts/
-    ├── install_elastic.sh         # Guest: Elasticsearch 8.x + Kibana + Fleet Server
-    ├── install_caldera.sh         # Guest: MITRE Caldera 5.x via Docker Compose
-    ├── install_cloud_sim.sh       # Guest: LocalStack + CloudTrail activity + Filebeat
-    ├── install_win_tools.ps1      # Guest: Sysmon + Elastic Agent enrollment + sandcat
-    ├── deploy_caldera_agent.ps1   # Standalone: re-deploy sandcat without full reprovision
-    ├── caldera_setup.py           # Loads cloud-focused abilities/adversary into Caldera
-    └── scenarios/                 # Cloud attack scenarios and NDJSON samples
+    ├── install_elastic.sh            # Guest: Elasticsearch 8.x + Kibana + Fleet Server
+    ├── install_caldera.sh            # Guest: MITRE Caldera 5.x via Docker Compose
+    ├── install_cloud_sim.sh          # Guest: LocalStack + CloudTrail activity + Filebeat
+    ├── install_win_tools.ps1         # Guest: Sysmon + Elastic Agent enrollment + sandcat
+    ├── deploy_caldera_agent.ps1      # Standalone: re-deploy sandcat without full reprovision
+    ├── caldera_setup.py              # Loads cloud-focused abilities/adversary into Caldera
+    ├── setup_dc.ps1                  # Guest (win-dc stage 1): AD DS role install + DC promotion
+    ├── setup_dc_post_reboot.ps1      # Guest (win-dc stage 2): OUs, users, Sysmon, Elastic Agent
+    ├── setup_win_server.ps1          # Guest (win-server stage 1): network config + domain join
+    ├── setup_win_server_tools.ps1    # Guest (win-server stage 2): Sysmon + Elastic Agent
+    ├── join_domain.ps1               # Guest (win11-victim optional): domain-join the victim
+    └── scenarios/                    # Cloud attack scenarios and NDJSON samples
 ```
 
 **Generated at runtime (git-ignored):**
 - `elastic-credentials.txt` — `elastic` superuser password, written by `install_elastic.sh`
-- `fleet-enrollment-token.txt` — Fleet enrollment token consumed by `install_win_tools.ps1`
+- `fleet-enrollment-token.txt` — Fleet enrollment token consumed by all Windows VMs
+- `domain-info.txt` — Domain name, NetBIOS name, DC IP, and join credentials written by `setup_dc_post_reboot.ps1`; consumed by `setup_win_server.ps1` and `join_domain.ps1`
 - `localstack-auth-token.txt` — Optional LocalStack token on host; enables Pro features for `cloud-sim`
 
 ## Optional: Enable LocalStack Pro Features
@@ -218,10 +237,10 @@ bash setup.sh
 1. Verifies VMware Workstation and Vagrant are installed
 2. Downloads and installs `vagrant-vmware-utility` (`.deb`) and enables the systemd service
 3. Installs the `vagrant-vmware-desktop` Vagrant plugin
-4. Downloads the Windows 11 Vagrant box (~8–12 GB on first run)
-5. Provisions `elastic-siem` → `caldera` → `cloud-sim` → `win11-victim`
+4. Downloads the Windows 11 and Windows Server 2022 Vagrant boxes (~8–12 GB each on first run)
+5. Provisions in order: `elastic-siem` → `caldera` → `cloud-sim` → `win-dc` → `win-server` → `win11-victim`
 
-**First-run time: 25–40 minutes** (mostly network downloads).
+**First-run time: 45–70 minutes** (mostly network downloads; Windows Server VMs each include a mid-provision reboot).
 
 Linux note: `setup.sh` provisions the VMs only. The automatic Kibana template import and Caldera content load happen in the Windows bootstrap path.
 
@@ -242,8 +261,8 @@ cd C:\path\to\hunt_lab
 1. Verifies VMware Workstation and Vagrant are installed
 2. Downloads and installs `vagrant-vmware-utility` (`.msi`) silently
 3. Installs the `vagrant-vmware-desktop` Vagrant plugin
-4. Downloads the Windows 11 Vagrant box (~8–12 GB on first run)
-5. Provisions `elastic-siem` → imports the Kibana hunt template → `caldera` → loads Caldera abilities → `cloud-sim` → `win11-victim`
+4. Downloads the Windows 11 and Windows Server 2022 Vagrant boxes (~8–12 GB each on first run)
+5. Provisions in order: `elastic-siem` → imports the Kibana hunt template → `caldera` → loads Caldera abilities → `cloud-sim` → `win-dc` → `win-server` → `win11-victim`
 
 If a provisioning step fails, rerun just that machine with `vagrant up <vm-name> --provision` or `vagrant provision <vm-name>`.
 
@@ -253,13 +272,29 @@ If a provisioning step fails, rerun just that machine with `vagrant up <vm-name>
 
 Once the setup script completes:
 
-| Service             | URL                           | Credentials                          |
-|---------------------|-------------------------------|--------------------------------------|
+| Service             | URL / Address                 | Credentials                               |
+|---------------------|-------------------------------|-------------------------------------------|
 | Kibana (SIEM)       | http://192.168.56.10:5601     | `elastic` / see `elastic-credentials.txt` |
-| Caldera (C2)        | http://192.168.56.30:8888     | `admin` / `admin`                    |
-| LocalStack API      | http://192.168.56.40:4566     | local test credentials managed in VM |
-| Elasticsearch API   | http://192.168.56.10:9200     | same as Kibana                       |
-| Fleet Server        | http://192.168.56.10:8220     | internal — used by Elastic Agent     |
+| Caldera (C2)        | http://192.168.56.30:8888     | `admin` / `admin`                         |
+| LocalStack API      | http://192.168.56.40:4566     | local test credentials managed in VM      |
+| Elasticsearch API   | http://192.168.56.10:9200     | same as Kibana                            |
+| Fleet Server        | http://192.168.56.10:8220     | internal — used by Elastic Agent          |
+| Domain Controller   | 192.168.56.50 (RDP)           | `LAB\vagrant` / `vagrant`                 |
+| Member Server       | 192.168.56.51 (RDP)           | `LAB\vagrant` / `vagrant`                 |
+
+**Active Directory — `lab.local`**
+
+| Account          | Type            | Group         | Password       |
+|------------------|-----------------|---------------|----------------|
+| `LAB\vagrant`    | Domain Admin    | Domain Admins | `vagrant`      |
+| `LAB\ajohnson`   | Domain Admin    | Domain Admins | `Lab!Password1`|
+| `LAB\jsmith`     | Standard user   | —             | `Lab!Password1`|
+| `LAB\bwilliams`  | Standard user   | —             | `Lab!Password1`|
+| `LAB\cdavis`     | Standard user   | —             | `Lab!Password1`|
+| `LAB\svc-backup` | Service account | —             | `Lab!Password1`|
+| `LAB\svc-deploy` | Service account | —             | `Lab!Password1`|
+
+DC safe mode (DSRM) password: `Vagrant123!`
 
 > **Note:** VMs created by Vagrant do not automatically appear in the VMware Workstation GUI.
 > To view them: **File → Open** and browse to `.vagrant/machines/<name>/vmware_desktop/<name>.vmx`.
@@ -273,22 +308,39 @@ Caldera (192.168.56.30)
     │
     │  executes ATT&CK TTPs via sandcat agent
     ▼
-Windows 11 Victim (192.168.56.20)
-    │  sandcat: beacons to Caldera, runs adversary commands
-    │  Sysmon: logs process/network/file/registry events
-    │  Elastic Agent: ships all telemetry via Fleet
+┌───────────────────────────────────────────────────────────────────┐
+│  Windows Domain: lab.local                                        │
+│                                                                   │
+│  win-dc (192.168.56.50)          win-server (192.168.56.51)       │
+│  Domain Controller + DNS         Member server                    │
+│  Sysmon + Elastic Agent          Sysmon + Elastic Agent           │
+│                                                                   │
+│  win11-victim (192.168.56.20)  ← optional domain member          │
+│  Windows 11 workstation                                           │
+│  sandcat agent → beacons to Caldera                               │
+│  Sysmon + Elastic Agent                                           │
+└───────────────────────────────────────────────────────────────────┘
+    │
+    │  Elastic Agent ships all host telemetry via Fleet
     │
     ├──────────────────────────────────────────────┐
     │                                              │
     ▼                                              ▼
 Local Cloud Sim (192.168.56.40)               Elastic SIEM (192.168.56.10)
-    │  LocalStack simulates AWS APIs              │  Fleet/Filebeat ingest host + cloud telemetry
+    │  LocalStack simulates AWS APIs              │  Fleet ingest: endpoint + AD + cloud
     │  CloudTrail-style events written locally    │
     │  Filebeat ships cloud activity              ▼
     └──────────────────────────────────────────► Kibana → Dashboards / Discover / Security
 ```
 
-The sandcat agent is deployed automatically during provisioning and persists across reboots via a Windows Scheduled Task (`WindowsSecurityUpdate`). It beacons back to Caldera on port 8888 and joins the `red` agent group.
+The sandcat agent is deployed automatically during provisioning on `win11-victim` and persists across reboots via a Windows Scheduled Task (`WindowsSecurityUpdate`). It beacons back to Caldera on port 8888 and joins the `red` agent group.
+
+To deploy sandcat on the domain VMs as well (for lateral movement / multi-host scenarios):
+
+```bash
+vagrant provision win-dc     --provision-with deploy_caldera_agent
+vagrant provision win-server --provision-with deploy_caldera_agent
+```
 
 ### Viewing data in Kibana
 
@@ -361,6 +413,24 @@ event.dataset : "windows.sysmon_operational" and event.code : "1" and process.na
 
 # PowerShell script block logging — encoded/suspicious content
 event.dataset : "windows.powershell_operational" and event.code : "4104" and winlog.event_data.ScriptBlockText : (*invoke* or *bypass* or *encoded* or *iex*)
+
+# Active Directory — new user creation (Security Event 4720)
+event.dataset : "system.security" and event.code : "4720"
+
+# AD — user added to privileged group (Security Event 4728 = Domain Admins)
+event.dataset : "system.security" and event.code : "4728"
+
+# AD — failed logon across domain (Security Event 4625) — brute force indicator
+event.dataset : "system.security" and event.code : "4625"
+
+# AD — Kerberos pre-authentication failure (4771) — AS-REP roasting or password spray
+event.dataset : "system.security" and event.code : "4771"
+
+# Lateral movement — remote service creation on a domain host (Security Event 7045)
+event.dataset : "system.system" and event.code : "7045"
+
+# Scope all AD/domain activity to a specific host
+agent.hostname : "win-dc" and event.dataset : "system.security"
 ```
 
 ---
@@ -373,8 +443,10 @@ vagrant ssh elastic-siem
 vagrant ssh caldera
 vagrant ssh cloud-sim
 
-# RDP into Windows 11
+# RDP into Windows VMs
 vagrant rdp win11-victim
+vagrant rdp win-dc
+vagrant rdp win-server
 
 # Suspend / resume all VMs
 vagrant suspend
@@ -391,8 +463,17 @@ vagrant up win11-victim --provision
 vagrant destroy cloud-sim -f
 vagrant up cloud-sim --provision
 
+# Rebuild the domain (must destroy member before DC or domain-info.txt guard fires)
+vagrant destroy win-server -f
+vagrant destroy win-dc -f
+vagrant up win-dc --provision
+vagrant up win-server --provision
+
 # Re-provision without destroying
 vagrant provision elastic-siem
+
+# Domain-join win11-victim to lab.local (optional, after win-dc is up)
+vagrant provision win11-victim --provision-with join_domain
 ```
 
 ### Re-deploying the Caldera sandcat agent
@@ -400,8 +481,15 @@ vagrant provision elastic-siem
 If the agent stops beaconing (e.g., after the VM is rebuilt), re-deploy it without a full reprovision:
 
 ```bash
+# Victim workstation
 vagrant up win11-victim
 vagrant provision win11-victim --provision-with deploy_caldera_agent
+
+# Domain controller
+vagrant provision win-dc --provision-with deploy_caldera_agent
+
+# Member server
+vagrant provision win-server --provision-with deploy_caldera_agent
 ```
 
 Or run the standalone script manually over WinRM:
@@ -439,3 +527,8 @@ vagrant winrm win11-victim -e -c "powershell -ExecutionPolicy Bypass -File C:\\v
 | No cloud activity appears in Kibana | `cloud-sim` was not provisioned or Filebeat is not shipping from `192.168.56.40` | Run `vagrant up cloud-sim --provision`, then verify Filebeat and LocalStack inside the VM |
 | VMs don't appear in VMware Workstation GUI | Vagrant manages them outside the GUI's default library | Open them manually: **File → Open** → browse to `.vagrant/machines/<name>/vmware_desktop/<name>.vmx` |
 | `setup.ps1` says VMware not installed, but it is (non-C: drive) | `Get-Command vmrun` only searches `%PATH%`; installer on non-default drives may not update PATH | Fixed in `setup.ps1`: falls back to registry `HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation\InstallPath` and adds the directory to PATH for the session |
+| `win-dc` provision hangs indefinitely after DC promotion reboot | WinRM retries exhaust before AD finishes coming online post-reboot | Already mitigated: `dc.winrm.retry_limit = 60` / `retry_delay = 15` gives up to 15 minutes; if still hanging, `vagrant provision win-dc --provision-with setup_dc_post_reboot` once the VM is back |
+| `win-server` guard fails: `domain-info.txt not found` | `win-dc` stage 2 (`setup_dc_post_reboot.ps1`) did not complete successfully | Check `C:\Windows\Temp\setup-dc-stage2.log` on `win-dc`; re-run with `vagrant provision win-dc --provision-with setup_dc_post_reboot` |
+| `Add-Computer` fails: `The specified domain either does not exist or could not be contacted` | `win-server` DNS not yet pointing at the DC, or the DC is still booting | `setup_win_server.ps1` sets the DNS server to `192.168.56.50`; if the DC was slow, re-run with `vagrant provision win-server --provision-with setup_win_server` (the reboot provisioner is idempotent) |
+| `win-server` or `win-dc` APIPA adapter not detected | VM already has a static IP from a previous run | The APIPA check in `setup_win_server.ps1` / `setup_dc.ps1` will log a warning and continue; no action needed |
+| Domain users not visible in AD after full reprovision | `win-dc` was destroyed and rebuilt but `domain-info.txt` was not overwritten before `win-server` read it | Destroy both in order: `vagrant destroy win-server win-dc -f`, then `vagrant up win-dc --provision` followed by `vagrant up win-server --provision` |
