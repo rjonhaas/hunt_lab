@@ -72,7 +72,7 @@ else
   log "Plugin ${PLUGIN_NAME} is already installed."
 fi
 
-# ── 5. Add the Windows 11 box (pre-fetch to give user early progress signal) ──
+# ── 5. Add the Windows boxes (pre-fetch to give user early progress signal) ───
 log "Checking for gusztavvargadr/windows-11 box..."
 if ! vagrant box list 2>/dev/null | grep -q "gusztavvargadr/windows-11"; then
   log "Downloading Windows 11 Vagrant box (~8-12 GB, this is the slowest step)..."
@@ -81,24 +81,40 @@ else
   log "Windows 11 box already present."
 fi
 
+log "Checking for gusztavvargadr/windows-server-2022 box..."
+if ! vagrant box list 2>/dev/null | grep -q "gusztavvargadr/windows-server-2022"; then
+  log "Downloading Windows Server 2022 Vagrant box (~8-12 GB)..."
+  vagrant box add gusztavvargadr/windows-server-2022 --provider vmware_desktop
+else
+  log "Windows Server 2022 box already present."
+fi
+
 # ── 6. Bring up the lab in the correct order ──────────────────────────────────
 log ""
 log "================================================================="
 log "  Starting the Threat Hunting Lab..."
-log "  Total estimated time: 25–40 minutes on first run"
+log "  Total estimated time: 45–70 minutes on first run"
 log "================================================================="
 log ""
 
-log "Step 1/4 — Provisioning elastic-siem (Elasticsearch + Kibana + Fleet)..."
+log "Step 1/6 — Provisioning elastic-siem (Elasticsearch + Kibana + Fleet)..."
 vagrant up elastic-siem --provision
 
-log "Step 2/4 — Provisioning caldera (MITRE Caldera C2)..."
+log "Step 2/6 — Provisioning caldera (MITRE Caldera C2)..."
 vagrant up caldera --provision
 
-log "Step 3/4 — Provisioning cloud-sim (LocalStack + CloudTrail + Filebeat)..."
+log "Step 3/6 — Provisioning cloud-sim (LocalStack + CloudTrail + Filebeat)..."
 vagrant up cloud-sim --provision
 
-log "Step 4/4 — Provisioning win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
+log "Step 4/6 — Provisioning win-dc (Active Directory Domain Controller)..."
+log "         This step includes a reboot after DC promotion — this is normal."
+vagrant up win-dc --provision
+
+log "Step 5/6 — Provisioning win-server (domain member server)..."
+log "         This step includes a reboot after domain join — this is normal."
+vagrant up win-server --provision
+
+log "Step 6/6 — Provisioning win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
 vagrant up win11-victim --provision
 
 # ── 7. Print access info ──────────────────────────────────────────────────────
@@ -111,9 +127,18 @@ log ""
 log "================================================================="
 log "  Lab is up!"
 log ""
-log "  Kibana (SIEM):   http://192.168.56.10:5601"
-log "  Caldera (C2):    http://192.168.56.30:8888   (admin / admin)"
-log "  LocalStack API:  http://192.168.56.40:4566"
+log "  Kibana (SIEM):        http://192.168.56.10:5601"
+log "  Caldera (C2):         http://192.168.56.30:8888   (admin / admin)"
+log "  LocalStack API:       http://192.168.56.40:4566"
+log ""
+log "  AD Domain:            lab.local  (NetBIOS: LAB)"
+log "  Domain Controller:    192.168.56.50  (win-dc)"
+log "  Member Server:        192.168.56.51  (win-server)"
+log "  Victim workstation:   192.168.56.20  (win11-victim)"
+log ""
+log "  Domain admin:         LAB\\vagrant or LAB\\ajohnson"
+log "  Domain user pass:     Lab!Password1"
+log "  DC safe mode pass:    Vagrant123!"
 log ""
 if [[ -n "${ELASTIC_CREDS}" ]]; then
 log "  Elastic creds:   ${ELASTIC_CREDS}"
@@ -121,6 +146,16 @@ else
 log "  Elastic creds:   see elastic-credentials.txt"
 fi
 log ""
-log "  RDP into victim: vagrant rdp win11-victim"
-log "  Tear it down:    vagrant destroy -f"
+log "  RDP into victim:  vagrant rdp win11-victim"
+log "  RDP into DC:      vagrant rdp win-dc"
+log "  RDP into server:  vagrant rdp win-server"
+log ""
+log "  Domain-join victim (optional):"
+log "    vagrant provision win11-victim --provision-with join_domain"
+log ""
+log "  Deploy Caldera agents (optional):"
+log "    vagrant provision win-dc     --provision-with deploy_caldera_agent"
+log "    vagrant provision win-server --provision-with deploy_caldera_agent"
+log ""
+log "  Tear it down:     vagrant destroy -f"
 log "================================================================="
