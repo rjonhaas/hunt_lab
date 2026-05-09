@@ -64,13 +64,13 @@ if ($waited -ge $maxWait) {
 # ── 3. Create Organizational Units ────────────────────────────────────────────
 Write-Log "Creating Organizational Units..."
 $domainDN = (Get-ADDomain).DistinguishedName   # e.g. DC=lab,DC=local
-foreach ($ou in @("Workstations", "Servers", "Users", "ServiceAccounts", "IT")) {
-    $ouDN = "OU=$ou,$domainDN"
-    if (-not (Get-ADOrganizationalUnit -Filter { DistinguishedName -eq $ouDN } -ErrorAction SilentlyContinue)) {
+foreach ($ou in @("Workstations", "Servers", "Employees", "ServiceAccounts", "IT")) {
+    $existingObj = Get-ADObject -Filter { Name -eq $ou } -SearchBase $domainDN -SearchScope OneLevel -ErrorAction SilentlyContinue
+    if (-not $existingObj) {
         New-ADOrganizationalUnit -Name $ou -Path $domainDN
         Write-Log "  Created OU: $ou"
     } else {
-        Write-Log "  OU already exists: $ou  (skipping)"
+        Write-Log "  '$ou' already exists (type: $($existingObj.ObjectClass)) - skipping"
     }
 }
 
@@ -78,16 +78,17 @@ foreach ($ou in @("Workstations", "Servers", "Users", "ServiceAccounts", "IT")) 
 Write-Log "Creating domain users..."
 $DefaultPass = ConvertTo-SecureString "Lab!Password1" -AsPlainText -Force
 $users = @(
-    @{ Name = "John Smith";    SamAccountName = "jsmith";     OU = "Users";           Description = "Help Desk Technician" },
+    @{ Name = "John Smith";    SamAccountName = "jsmith";     OU = "Employees";       Description = "Help Desk Technician" },
     @{ Name = "Alice Johnson"; SamAccountName = "ajohnson";   OU = "IT";              Description = "Systems Administrator" },
-    @{ Name = "Bob Williams";  SamAccountName = "bwilliams";  OU = "Users";           Description = "Finance Analyst" },
-    @{ Name = "Carol Davis";   SamAccountName = "cdavis";     OU = "Users";           Description = "HR Manager" },
+    @{ Name = "Bob Williams";  SamAccountName = "bwilliams";  OU = "Employees";       Description = "Finance Analyst" },
+    @{ Name = "Carol Davis";   SamAccountName = "cdavis";     OU = "Employees";       Description = "HR Manager" },
     @{ Name = "svc-backup";    SamAccountName = "svc-backup"; OU = "ServiceAccounts"; Description = "Backup Service Account" },
     @{ Name = "svc-deploy";    SamAccountName = "svc-deploy"; OU = "ServiceAccounts"; Description = "Deployment Service Account" }
 )
 foreach ($u in $users) {
     $ouPath = "OU=$($u.OU),$domainDN"
-    if (-not (Get-ADUser -Filter { SamAccountName -eq $u.SamAccountName } -ErrorAction SilentlyContinue)) {
+    $sam = $u.SamAccountName
+    if (-not (Get-ADUser -Filter { SamAccountName -eq $sam } -ErrorAction SilentlyContinue)) {
         New-ADUser `
             -Name              $u.Name `
             -SamAccountName    $u.SamAccountName `
@@ -137,7 +138,7 @@ Write-Log "Installing Sysmon..."
 $SysmonExe = if (Test-Path "$SysmonDir\Sysmon64.exe") { "$SysmonDir\Sysmon64.exe" } else { "$SysmonDir\Sysmon.exe" }
 $SysmonSvc = Get-Service -Name "Sysmon64" -ErrorAction SilentlyContinue
 $sysArgs   = if ($SysmonSvc) {
-    Write-Log "Sysmon already installed — updating config only..."
+    Write-Log "Sysmon already installed - updating config only..."
     @("-c", $SysmonConfig)
 } else {
     @("-accepteula", "-i", $SysmonConfig)
@@ -182,7 +183,7 @@ if (-not $AgentExtracted) { Write-Error "Could not find extracted Elastic Agent 
 
 $ExistingAgent = Get-Service -Name "Elastic Agent" -ErrorAction SilentlyContinue
 if ($ExistingAgent) {
-    Write-Log "Elastic Agent already installed — skipping (service: $($ExistingAgent.Status))."
+    Write-Log "Elastic Agent already installed - skipping (service: $($ExistingAgent.Status))."
 } else {
     Write-Log "Installing and enrolling Elastic Agent..."
     # Use Start-Process (same pattern as Sysmon) to redirect elastic-agent's I/O

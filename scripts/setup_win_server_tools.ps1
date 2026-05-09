@@ -47,7 +47,7 @@ Write-Log "Installing Sysmon..."
 $SysmonExe = if (Test-Path "$SysmonDir\Sysmon64.exe") { "$SysmonDir\Sysmon64.exe" } else { "$SysmonDir\Sysmon.exe" }
 $SysmonSvc = Get-Service -Name "Sysmon64" -ErrorAction SilentlyContinue
 $sysArgs   = if ($SysmonSvc) {
-    Write-Log "Sysmon already installed — updating config only..."
+    Write-Log "Sysmon already installed - updating config only..."
     @("-c", $SysmonConfig)
 } else {
     @("-accepteula", "-i", $SysmonConfig)
@@ -97,7 +97,7 @@ if (-not $AgentExtracted) { Write-Error "Could not find extracted Elastic Agent 
 
 $ExistingAgent = Get-Service -Name "Elastic Agent" -ErrorAction SilentlyContinue
 if ($ExistingAgent) {
-    Write-Log "Elastic Agent already installed — skipping (service: $($ExistingAgent.Status))."
+    Write-Log "Elastic Agent already installed - skipping (service: $($ExistingAgent.Status))."
 } else {
     Write-Log "Installing and enrolling Elastic Agent..."
     # Use Start-Process (same pattern as Sysmon) to redirect elastic-agent's I/O

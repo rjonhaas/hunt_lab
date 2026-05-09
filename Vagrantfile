@@ -86,7 +86,7 @@ Vagrant.configure("2") do |config|
   # Two-stage provisioning: setup_dc.ps1 promotes the DC, Vagrant reboots,
   # then setup_dc_post_reboot.ps1 creates users/OUs and installs Sysmon + Elastic Agent.
   config.vm.define "win-dc" do |dc|
-    dc.vm.box          = "gusztavvargadr/windows-server-2022"
+    dc.vm.box          = "gusztavvargadr/windows-server-2022-standard"
     dc.vm.hostname     = "win-dc"
     dc.vm.communicator = "winrm"
     dc.vm.network       "private_network", ip: "192.168.56.50"
@@ -95,6 +95,11 @@ Vagrant.configure("2") do |config|
     # Give WinRM extra retries — DC promotion reboot takes longer than a normal reboot
     dc.winrm.retry_limit = 60
     dc.winrm.retry_delay = 15
+    # After DC promotion, local 'vagrant' becomes 'LAB\vagrant'. NTLM negotiate over
+    # port-forwarding fails to resolve the domain account. Basic auth sends credentials
+    # directly and the DC resolves 'vagrant' as 'LAB\vagrant' successfully.
+    dc.winrm.transport     = :plaintext
+    dc.winrm.basic_auth_only = true
 
     dc.vm.provider "vmware_desktop" do |v|
       v.memory = 4096
@@ -154,7 +159,7 @@ Vagrant.configure("2") do |config|
   # Two-stage provisioning: setup_win_server.ps1 joins the domain, Vagrant reboots,
   # then setup_win_server_tools.ps1 installs Sysmon and Elastic Agent.
   config.vm.define "win-server" do |srv|
-    srv.vm.box          = "gusztavvargadr/windows-server-2022"
+    srv.vm.box          = "gusztavvargadr/windows-server-2022-standard"
     srv.vm.hostname     = "win-server"
     srv.vm.communicator = "winrm"
     srv.vm.network       "private_network", ip: "192.168.56.51"

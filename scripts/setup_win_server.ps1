@@ -74,20 +74,42 @@ if ($apipa) {
     Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses $DCIP
     Write-Log "Adapter configured: $PrivateIP/24, DNS -> $DCIP"
 } else {
-    Write-Log "WARNING: No APIPA adapter found — adapter may already be configured."
+    Write-Log "WARNING: No APIPA adapter found - adapter may already be configured."
 }
 
 # ── 4. Join the domain ────────────────────────────────────────────────────────
 Write-Log "Checking domain membership..."
 $currentDomain = (Get-WmiObject Win32_ComputerSystem).Domain
 if ($currentDomain -ieq $DomainName) {
-    Write-Log "Already a member of $DomainName — skipping domain join."
+    Write-Log "Already a member of $DomainName - skipping domain join."
 } else {
     Write-Log "Joining domain '$DomainName' as $JoinUser ..."
-    Add-Computer -DomainName $DomainName -Credential $JoinCred -Force -ErrorAction Stop
-    Write-Log "Domain join successful. Vagrant will now reboot win-server."
+    # Flush DNS and retry — DNS client may not pick up the new server address instantly
+    ipconfig /flushdns | Out-Null
+    Start-Sleep -Seconds 5
+    $maxAttempts = 4
+    $joined = $false
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        try {
+            Add-Computer -DomainName $DomainName -Credential $JoinCred -Force -ErrorAction Stop
+            Write-Log "Domain join successful (attempt $attempt)."
+            $joined = $true
+            break
+        } catch {
+            Write-Log "Domain join attempt $attempt/$maxAttempts failed: $_"
+            if ($attempt -lt $maxAttempts) {
+                Write-Log "Retrying in 20s..."
+                Start-Sleep -Seconds 20
+                ipconfig /flushdns | Out-Null
+            }
+        }
+    }
+    if (-not $joined) {
+        Write-Error "Domain join failed after $maxAttempts attempts. Check DC connectivity and DNS."
+        exit 1
+    }
 }
 
-Write-Log "Stage 1 complete. Vagrant rebooting — Stage 2 continues in setup_win_server_tools.ps1."
+Write-Log "Stage 1 complete. Vagrant rebooting - Stage 2 continues in setup_win_server_tools.ps1."
 Stop-Transcript
 exit 0

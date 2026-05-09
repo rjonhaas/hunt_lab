@@ -43,7 +43,7 @@ $JoinCred   = New-Object System.Management.Automation.PSCredential($JoinUser, $J
 Write-Log "Checking current domain membership..."
 $currentDomain = (Get-WmiObject Win32_ComputerSystem).Domain
 if ($currentDomain -ieq $DomainName) {
-    Write-Log "Already a member of $DomainName — nothing to do."
+    Write-Log "Already a member of $DomainName - nothing to do."
     Stop-Transcript
     exit 0
 }

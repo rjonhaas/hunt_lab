@@ -55,7 +55,7 @@ if ($apipa) {
     Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses "127.0.0.1"
     Write-Log "Adapter configured: $PrivateIP/24, DNS -> 127.0.0.1"
 } else {
-    Write-Log "WARNING: No APIPA adapter found — adapter may already be configured."
+    Write-Log "WARNING: No APIPA adapter found - adapter may already be configured."
 }
 
 # ── 4. Install AD DS and DNS Windows roles ────────────────────────────────────
@@ -63,7 +63,15 @@ Write-Log "Installing AD-Domain-Services and DNS roles..."
 $result = Install-WindowsFeature -Name AD-Domain-Services, DNS -IncludeManagementTools
 Write-Log "Feature install: Success=$($result.Success), RestartNeeded=$($result.RestartNeeded)"
 
-# ── 5. Promote to domain controller ──────────────────────────────────────────
+# ── 5. Configure WinRM basic auth (persists through DC promotion reboot) ─────
+# After DC promotion, NTLM negotiate over port-forwarding fails to authenticate
+# 'vagrant' as the new domain account 'LAB\vagrant'. Basic auth resolves it correctly.
+Write-Log "Enabling WinRM basic auth for post-promotion Vagrant reconnect..."
+cmd /c 'winrm set winrm/config/service/auth @{Basic="true"}' | Out-Null
+cmd /c 'winrm set winrm/config/service @{AllowUnencrypted="true"}' | Out-Null
+Write-Log "WinRM basic auth enabled."
+
+# ── 6. Promote to domain controller ──────────────────────────────────────────
 # -NoRebootOnCompletion:$true suppresses the automatic reboot so Vagrant can
 # reboot at the right time (via reboot: true in the Vagrantfile).
 Write-Log "Promoting win-dc to DC for domain '$DomainName'..."
