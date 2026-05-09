@@ -24,8 +24,8 @@ function Write-Log {
 $TempDir      = "C:\Windows\Temp\lab-setup"
 $SysmonDir    = "$TempDir\Sysmon"
 $AgentDir     = "$TempDir\ElasticAgent"
-$FleetServer  = "http://192.168.56.10:8220"
-$CalderaServer = "http://192.168.56.30:8888"
+$FleetServer  = "http://192.168.56.1:8220"
+$CalderaServer = "http://192.168.56.1:8888"
 $TokenFile    = "C:\vagrant\fleet-enrollment-token.txt"
 
 New-Item -ItemType Directory -Force -Path $SysmonDir  | Out-Null

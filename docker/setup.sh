@@ -79,6 +79,12 @@ sleep 30
 
 ELASTIC_PASS=$(grep "^ELASTIC_PASSWORD=" .env | cut -d= -f2 | tr -d '[:space:]' || echo "<see .env>")
 
+# Write elastic-credentials.txt to the repo root so setup.ps1 can read it
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+echo "elastic:${ELASTIC_PASS}" > "${REPO_ROOT}/elastic-credentials.txt"
+chmod 600 "${REPO_ROOT}/elastic-credentials.txt"
+log "elastic-credentials.txt written to repo root."
+
 log ""
 log "================================================================="
 log "  Docker lab is up!"
@@ -88,9 +94,9 @@ log "  Caldera (C2):    http://${HOST_IP}:8888   admin / admin"
 log "  Fleet Server:    http://${HOST_IP}:8220"
 log "  LocalStack API:  http://${HOST_IP}:4566"
 log ""
-log "  Enrollment token: docker/fleet-enrollment-token.txt"
-log "  Windows victim:  vagrant up win11-victim --provision"
-log "                   (from the repo root — uses fleet-enrollment-token.txt)"
+log "  Enrollment token: fleet-enrollment-token.txt  (repo root)"
+log "  Windows VMs:     vagrant up win-dc win-server win11-victim --no-parallel"
+log "                   (from the repo root)"
 log ""
 log "  View logs:       docker compose logs -f"
 log "  Stop lab:        docker compose down"

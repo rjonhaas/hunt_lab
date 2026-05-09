@@ -5,7 +5,7 @@ Run from host: python scripts/caldera_setup.py
 """
 import json, sys, urllib.request, urllib.error
 
-CALDERA = "http://192.168.56.30:8888"
+CALDERA = "http://192.168.56.1:8888"
 API_KEY  = "ADMIN123"
 
 # Fixed UUIDs so re-runs are idempotent

@@ -20,8 +20,8 @@ ELASTIC_PASSWORD="${ELASTIC_PASSWORD}"
 KIBANA_SYSTEM_PASSWORD="${KIBANA_SYSTEM_PASSWORD}"
 HOST_IP="${HOST_IP}"
 CALDERA_CONFIG="/workspace/docker/config/caldera/local.yml"
-ENV_FILE="/workspace/.env"
-TOKEN_FILE="/workspace/docker/fleet-enrollment-token.txt"
+ENV_FILE="/workspace/docker/.env"
+TOKEN_FILE="/workspace/fleet-enrollment-token.txt"
 
 log()  { echo "[bootstrap] $*"; }
 die()  { echo "[bootstrap] ERROR: $*" >&2; exit 1; }

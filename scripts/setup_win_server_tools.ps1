@@ -17,8 +17,8 @@ function Write-Log {
     Write-Host "[win-server] $Message"
 }
 
-$FleetServer   = "http://192.168.56.10:8220"
-$CalderaServer = "http://192.168.56.30:8888"
+$FleetServer   = "http://192.168.56.1:8220"
+$CalderaServer = "http://192.168.56.1:8888"
 $TokenFile     = "C:\vagrant\fleet-enrollment-token.txt"
 
 $TempDir   = "C:\Windows\Temp\lab-setup"

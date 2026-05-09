@@ -24,8 +24,8 @@ function Write-Log {
 $DomainName     = "lab.local"
 $NetBIOSName    = "LAB"
 $PrivateIP      = "192.168.56.50"
-$FleetServer    = "http://192.168.56.10:8220"
-$CalderaServer  = "http://192.168.56.30:8888"
+$FleetServer    = "http://192.168.56.1:8220"
+$CalderaServer  = "http://192.168.56.1:8888"
 $TokenFile      = "C:\vagrant\fleet-enrollment-token.txt"
 $DomainInfoFile = "C:\vagrant\domain-info.txt"
 

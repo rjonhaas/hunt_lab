@@ -1,90 +1,44 @@
 # Vagrantfile
 # Threat Hunting Lab: Elastic SIEM + Windows Domain + MITRE Caldera + Local Cloud Sim
 #
-# VM inventory:
-#   192.168.56.10  elastic-siem   Ubuntu 22.04  — Elasticsearch, Kibana, Fleet
+# Architecture:
+#   Linux services (Elasticsearch, Kibana, Fleet Server, Caldera, LocalStack, Filebeat)
+#   run as Docker containers on the host. Only the three Windows VMs run under Vagrant.
+#
+# VM inventory (Vagrant):
 #   192.168.56.20  win11-victim   Windows 11    — Victim workstation
-#   192.168.56.30  caldera        Ubuntu 22.04  — MITRE Caldera C2
-#   192.168.56.40  cloud-sim      Ubuntu 22.04  — LocalStack + CloudTrail + Filebeat
 #   192.168.56.50  win-dc         WinSrv 2022   — Active Directory DC (lab.local)
 #   192.168.56.51  win-server     WinSrv 2022   — Domain member server
 #
-# Provisioning order (handled automatically by setup.sh):
-#   1. elastic-siem   — writes fleet-enrollment-token.txt
-#   2. caldera        — C2 must be up before Windows agents are deployed
-#   3. cloud-sim      — independent of Windows domain
-#   4. win-dc         — writes domain-info.txt (depends on elastic-siem)
-#   5. win-server     — depends on elastic-siem + win-dc
-#   6. win11-victim   — depends on elastic-siem
+# Docker services (host 192.168.56.1):
+#   :9200 / :5601 / :8220  — Elasticsearch + Kibana + Fleet Server
+#   :8888                  — MITRE Caldera C2
+#   :4566                  — LocalStack
+#
+# Provisioning order:
+#   1. Run docker/setup.sh on the host — starts all Linux services, writes
+#      fleet-enrollment-token.txt to repo root and elastic-credentials.txt
+#   2. win-dc         — promotes DC, writes domain-info.txt, installs Sysmon +
+#                       Elastic Agent, deploys sandcat
+#   3. win-server     — joins domain, installs Sysmon + Elastic Agent, deploys sandcat
+#   4. win11-victim   — installs Sysmon + Elastic Agent, deploys sandcat
 #
 # Optional after full provisioning:
-#   vagrant provision win11-victim --provision-with join_domain   (domain-join the victim)
-#   vagrant provision <vm>         --provision-with deploy_caldera_agent
+#   (none — all provisioning is automatic)
 #
-# Manual launch:
-#   vagrant up --no-parallel
+# Manual launch (Windows VMs only):
+#   vagrant up win-dc win-server win11-victim --no-parallel
 
 Vagrant.configure("2") do |config|
 
   # Disable automatic box update checks for reproducibility
   config.vm.box_check_update = false
 
-  # ── Elastic SIEM ──────────────────────────────────────────────────────────
-  config.vm.define "elastic-siem" do |elastic|
-    elastic.vm.box      = "bento/ubuntu-22.04"
-    elastic.vm.hostname = "elastic-siem"
-    elastic.vm.network  "private_network", ip: "192.168.56.10"
-
-    elastic.vm.provider "vmware_desktop" do |v|
-      v.memory = 8192
-      v.cpus   = 4
-      v.vmx["displayname"] = "elastic-siem"
-      v.gui = false
-      v.linked_clone = false
-    end
-
-    elastic.vm.provision "shell", path: "scripts/install_elastic.sh"
-  end
-
-  # ── MITRE Caldera ─────────────────────────────────────────────────────────
-  # Provisioned before win11-victim so the C2 is ready when the agent
-  # is deployed, though it has no ordering dependency on elastic-siem.
-  config.vm.define "caldera" do |cal|
-    cal.vm.box      = "bento/ubuntu-22.04"
-    cal.vm.hostname = "caldera"
-    cal.vm.network  "private_network", ip: "192.168.56.30"
-
-    cal.vm.provider "vmware_desktop" do |v|
-      v.memory = 4096
-      v.cpus   = 2
-      v.vmx["displayname"] = "caldera"
-      v.gui = false
-      v.linked_clone = false
-    end
-
-    cal.vm.provision "shell", path: "scripts/install_caldera.sh"
-  end
-
-  # ── Local Cloud Simulator (LocalStack + CloudTrail + Filebeat) ───────────
-  config.vm.define "cloud-sim" do |cloud|
-    cloud.vm.box      = "bento/ubuntu-22.04"
-    cloud.vm.hostname = "cloud-sim"
-    cloud.vm.network  "private_network", ip: "192.168.56.40"
-
-    cloud.vm.provider "vmware_desktop" do |v|
-      v.memory = 4096
-      v.cpus   = 2
-      v.vmx["displayname"] = "cloud-sim"
-      v.gui = false
-      v.linked_clone = false
-    end
-
-    cloud.vm.provision "shell", path: "scripts/install_cloud_sim.sh"
-  end
   # ── Windows Domain Controller ──────────────────────────────────────────────────
-  # Provision AFTER elastic-siem (needs fleet-enrollment-token.txt).
-  # Two-stage provisioning: setup_dc.ps1 promotes the DC, Vagrant reboots,
-  # then setup_dc_post_reboot.ps1 creates users/OUs and installs Sysmon + Elastic Agent.
+    # Provision AFTER docker/setup.sh has written fleet-enrollment-token.txt.
+    # Two-stage provisioning: setup_dc.ps1 promotes the DC, Vagrant reboots,
+    # then setup_dc_post_reboot.ps1 creates users/OUs, installs Sysmon + Elastic Agent,
+    # and deploys the Caldera sandcat agent.
   config.vm.define "win-dc" do |dc|
     dc.vm.box          = "gusztavvargadr/windows-server-2022-standard"
     dc.vm.hostname     = "win-dc"
@@ -111,10 +65,10 @@ Vagrant.configure("2") do |config|
       v.linked_clone       = true
     end
 
-    # Guard: elastic-siem must be provisioned first
+    # Guard: docker/setup.sh must have run first
     dc.vm.provision "shell", privileged: false, inline: <<~POWERSHELL
       if (-not (Test-Path "C:\\vagrant\\fleet-enrollment-token.txt")) {
-        Write-Error "fleet-enrollment-token.txt not found. Run 'vagrant up elastic-siem' first."
+        Write-Error "fleet-enrollment-token.txt not found. Run 'bash docker/setup.sh' first."
         exit 1
       }
     POWERSHELL
@@ -129,11 +83,11 @@ Vagrant.configure("2") do |config|
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\setup_dc_post_reboot.ps1"
     POWERSHELL
 
-    # Deploy Caldera sandcat agent (run manually after lab is fully up)
-    dc.vm.provision "shell", name: "deploy_caldera_agent", run: "never", privileged: false, inline: <<~'POWERSHELL'
+    # Deploy Caldera sandcat agent automatically during provisioning
+    dc.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~'POWERSHELL'
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      $CalderaServer = "http://192.168.56.30:8888"
+      $CalderaServer = "http://192.168.56.1:8888"
       $SandcatPath   = "C:\Users\Public\svhost.exe"
       $TaskName      = "WindowsSecurityUpdate"
       $existingTask  = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -178,10 +132,10 @@ Vagrant.configure("2") do |config|
       v.linked_clone       = true
     end
 
-    # Guard: elastic-siem AND win-dc must be provisioned first
+    # Guard: docker/setup.sh and win-dc must have run first
     srv.vm.provision "shell", privileged: false, inline: <<~POWERSHELL
       if (-not (Test-Path "C:\\vagrant\\fleet-enrollment-token.txt")) {
-        Write-Error "fleet-enrollment-token.txt not found. Run 'vagrant up elastic-siem' first."
+        Write-Error "fleet-enrollment-token.txt not found. Run 'bash docker/setup.sh' first."
         exit 1
       }
       if (-not (Test-Path "C:\\vagrant\\domain-info.txt")) {
@@ -200,11 +154,11 @@ Vagrant.configure("2") do |config|
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\setup_win_server_tools.ps1"
     POWERSHELL
 
-    # Deploy Caldera sandcat agent (run manually after lab is fully up)
-    srv.vm.provision "shell", name: "deploy_caldera_agent", run: "never", privileged: false, inline: <<~'POWERSHELL'
+    # Deploy Caldera sandcat agent automatically during provisioning
+    srv.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~'POWERSHELL'
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      $CalderaServer = "http://192.168.56.30:8888"
+      $CalderaServer = "http://192.168.56.1:8888"
       $SandcatPath   = "C:\Users\Public\svhost.exe"
       $TaskName      = "WindowsSecurityUpdate"
       $existingTask  = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -247,10 +201,14 @@ Vagrant.configure("2") do |config|
       v.linked_clone = true
     end
 
-    # Abort early with a clear message if elastic-siem hasn't been provisioned yet
+    # Abort early with a clear message if docker/setup.sh hasn't run yet
     win.vm.provision "shell", inline: <<~POWERSHELL, privileged: false
       if (-not (Test-Path "C:\\vagrant\\fleet-enrollment-token.txt")) {
-        Write-Error "fleet-enrollment-token.txt not found. Run 'vagrant up elastic-siem' first."
+        Write-Error "fleet-enrollment-token.txt not found. Run 'bash docker/setup.sh' first."
+        exit 1
+      }
+      if (-not (Test-Path "C:\\vagrant\\domain-info.txt")) {
+        Write-Error "domain-info.txt not found. Run 'vagrant up win-dc' first."
         exit 1
       }
     POWERSHELL
@@ -260,18 +218,16 @@ Vagrant.configure("2") do |config|
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_win_tools.ps1"
     POWERSHELL
 
-    # Optional: domain-join win11-victim to lab.local
-    # Run after win-dc is fully provisioned:
-    #   vagrant provision win11-victim --provision-with join_domain
-    win.vm.provision "shell", name: "join_domain", run: "never", reboot: true, privileged: false, inline: <<~POWERSHELL
+    # Domain-join win11-victim to lab.local (requires win-dc to be fully provisioned)
+    win.vm.provision "shell", name: "join_domain", reboot: true, privileged: false, inline: <<~POWERSHELL
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\join_domain.ps1"
     POWERSHELL
 
-    # Deploy Caldera sandcat agent (can be re-run independently)
-    win.vm.provision "shell", name: "deploy_caldera_agent", run: "never", privileged: false, inline: <<~'POWERSHELL'
+    # Deploy Caldera sandcat agent automatically during provisioning
+    win.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~'POWERSHELL'
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      $CalderaServer = "http://192.168.56.30:8888"
+      $CalderaServer = "http://192.168.56.1:8888"
       $SandcatPath   = "C:\Users\Public\svhost.exe"
       $TaskName      = "WindowsSecurityUpdate"
       $existingTask  = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue

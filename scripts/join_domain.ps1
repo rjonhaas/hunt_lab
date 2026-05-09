@@ -1,7 +1,6 @@
 # join_domain.ps1
-# Optional: domain-join win11-victim to lab.local.
-# Run after win-dc is fully provisioned:
-#   vagrant provision win11-victim --provision-with join_domain
+# Domain-join win11-victim to lab.local.
+# Runs automatically during provisioning after install_win_tools.ps1.
 #
 # Vagrant will reboot win11-victim automatically after this script exits
 # (reboot: true on the join_domain provision block in the Vagrantfile).

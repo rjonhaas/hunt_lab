@@ -103,7 +103,8 @@ services:
   #   - Resets kibana_system password
   #   - Creates Fleet Server service token
   #   - Configures Fleet outputs / policies
-  #   - Fetches Windows enrollment token → writes to ./fleet-enrollment-token.txt
+  #   - Fetches Windows enrollment token → writes to repo root fleet-enrollment-token.txt
+  #   - Patches HOST_IP into docker/config/caldera/local.yml
   # Exits 0 on success; a non-zero exit is surfaced by `docker compose logs bootstrap`.
   bootstrap:
     image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.19.14}
@@ -117,11 +118,11 @@ services:
     environment:
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - KIBANA_SYSTEM_PASSWORD=${KIBANA_SYSTEM_PASSWORD}
-      - HOST_IP=${HOST_IP:?HOST_IP is required — set to the Ubuntu host LAN IP}
+      - HOST_IP=${HOST_IP:?HOST_IP is required — set to the Windows host LAN IP}
       - ELASTIC_VERSION=${ELASTIC_VERSION:-8.19.14}
     volumes:
       - ./bootstrap:/bootstrap:ro
-      - .:/workspace         # writes fleet-enrollment-token.txt to repo root
+      - ../:/workspace         # repo root — reads docker/.env, writes fleet-enrollment-token.txt
     entrypoint: ["bash", "/bootstrap/bootstrap.sh"]
     networks:
       - hunt_net

@@ -264,8 +264,8 @@ if ($pluginList -notmatch [regex]::Escape($PluginName)) {
     Write-Ok "Plugin $PluginName already installed."
 }
 
-# --- 6. Add the Windows 11 Vagrant box ---
-Write-Log "Checking for gusztavvargadr/windows-11 box..."
+# --- 6. Add Windows Vagrant boxes ---
+Write-Log "Checking for Windows Vagrant boxes..."
 $boxList = (& $vagrantExe box list 2>$null) -join "`n"
 if ($boxList -notmatch "gusztavvargadr/windows-11") {
     Write-Log "Downloading Windows 11 box (~8-12 GB). This is the slowest step..."
@@ -275,8 +275,16 @@ if ($boxList -notmatch "gusztavvargadr/windows-11") {
 } else {
     Write-Ok "Windows 11 box already present."
 }
+if ($boxList -notmatch "gusztavvargadr/windows-server-2022-standard") {
+    Write-Log "Downloading Windows Server 2022 box (~7-10 GB)..."
+    & $vagrantExe box add gusztavvargadr/windows-server-2022-standard --provider vmware_desktop
+    if ($LASTEXITCODE -ne 0) { Write-Die "Windows Server 2022 box download failed (exit $LASTEXITCODE)." }
+    Write-Ok "Windows Server 2022 box downloaded."
+} else {
+    Write-Ok "Windows Server 2022 box already present."
+}
 
-# --- 7. Bring up the lab ---
+# --- 7. Start Docker services ---
 Write-Log ""
 Write-Log "================================================================="
 Write-Log "  All prerequisites satisfied. Starting the lab..."
@@ -284,85 +292,114 @@ Write-Log "  Estimated time: 25-40 minutes on first run"
 Write-Log "================================================================="
 Write-Log ""
 
-Write-Log "Step 1/4 - elastic-siem (Elasticsearch + Kibana + Fleet)..."
-& $vagrantExe up elastic-siem --provision
-if ($LASTEXITCODE -ne 0) { Write-Die "elastic-siem provisioning failed. Check the output above for details." }
-Write-Ok "elastic-siem is up."
+# Verify Docker is available
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Die "Docker is not installed or not on PATH.`n  Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+}
+docker info --format "{{.ServerVersion}}" 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Die "Docker daemon is not running. Start Docker Desktop and try again."
+}
+
+$DockerDir = Join-Path $PSScriptRoot "docker"
+if (-not (Test-Path (Join-Path $DockerDir ".env"))) {
+    Copy-Item (Join-Path $DockerDir ".env.example") (Join-Path $DockerDir ".env")
+    Write-Warn "docker/.env created from .env.example."
+    Write-Warn "Edit docker/.env and set HOST_IP to 192.168.56.1 (the VMware host-only adapter IP)."
+    Write-Warn "Then re-run setup.ps1."
+    exit 1
+}
+
+$HostIP = (Select-String "^HOST_IP=" (Join-Path $DockerDir ".env") | Select-Object -First 1).Line -replace "^HOST_IP=",""
+if ([string]::IsNullOrWhiteSpace($HostIP) -or $HostIP.Trim() -eq "192.168.1.100") {
+    Write-Die "HOST_IP in docker/.env is still the placeholder.`n  Set it to 192.168.56.1 (VMware host-only adapter) and re-run."
+}
+
+Write-Log "Step 1/4 - Docker services (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
+Push-Location $DockerDir
+try {
+    & docker compose pull
+    if ($LASTEXITCODE -ne 0) { Write-Die "docker compose pull failed." }
+
+    & docker compose up -d elasticsearch kibana caldera localstack
+    if ($LASTEXITCODE -ne 0) { Write-Die "docker compose up failed." }
+
+    Write-Log "  Running bootstrap (sets passwords, Fleet token)..."
+    & docker compose run --rm bootstrap
+    if ($LASTEXITCODE -ne 0) { Write-Die "Bootstrap container failed. Run: docker compose logs bootstrap" }
+
+    & docker compose up -d fleet-server
+    if ($LASTEXITCODE -ne 0) { Write-Die "fleet-server failed to start." }
+
+    & docker compose up -d filebeat cloudtrail-gen
+    if ($LASTEXITCODE -ne 0) { Write-Die "filebeat/cloudtrail-gen failed to start." }
+} finally {
+    Pop-Location
+}
+Write-Ok "Docker services are up."
+
+# Write elastic-credentials.txt to the repo root for Kibana import and display
+$ElasticPass = (Select-String "^ELASTIC_PASSWORD=" (Join-Path $DockerDir ".env") | Select-Object -First 1).Line -replace "^ELASTIC_PASSWORD=",""
+if (-not [string]::IsNullOrWhiteSpace($ElasticPass)) {
+    Set-Content -Path (Join-Path $PSScriptRoot "elastic-credentials.txt") -Value "elastic:$($ElasticPass.Trim())" -NoNewline
+    Write-Ok "elastic-credentials.txt written."
+}
 
 # --- Import Kibana threat hunt report template ---
-$KibanaUrl     = "http://192.168.56.10:5601"
-$CredsFile     = Join-Path $PSScriptRoot "elastic-credentials.txt"
+$KibanaUrl      = "http://${HostIP}:5601"
+$CredsFile      = Join-Path $PSScriptRoot "elastic-credentials.txt"
 $TemplateNdjson = Join-Path $PSScriptRoot "kibana\hunt_report_template.ndjson"
 
 if (Test-Path $TemplateNdjson) {
     Write-Log "Importing Kibana Threat Hunt Report Template..."
-
-    # Parse credentials (format: user:password) — fail loudly if the file is missing
     if (-not (Test-Path $CredsFile)) {
         Write-Warn "elastic-credentials.txt not found — skipping Kibana template import."
-        Write-Warn "  Re-run after elastic-siem is fully provisioned, then import manually (see kibana/README.md)."
-        return
-    }
-    $RawCreds = (Get-Content $CredsFile -Raw).Trim()
-    $ColonIdx = $RawCreds.IndexOf(":")
-    if ($ColonIdx -le 0) {
-        Write-Warn "elastic-credentials.txt does not contain a valid 'user:password' entry — skipping import."
-        return
-    }
-    $KibUser  = $RawCreds.Substring(0, $ColonIdx)
-    $KibPass  = $RawCreds.Substring($ColonIdx + 1)
-    $B64Creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${KibUser}:${KibPass}"))
-
-    # Wait for Kibana to be available (up to 3 minutes)
-    $KibReady  = $false
-    $Deadline  = (Get-Date).AddMinutes(3)
-    Write-Log "  Waiting for Kibana API to become available..."
-    while ((Get-Date) -lt $Deadline) {
-        try {
-            $resp = Invoke-WebRequest -Uri "$KibanaUrl/api/status" `
-                -Headers @{Authorization = "Basic $B64Creds"} `
-                -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-            if ($resp.StatusCode -eq 200) { $KibReady = $true; break }
-        } catch { }
-        Start-Sleep -Seconds 5
-    }
-
-    if (-not $KibReady) {
-        Write-Warn "Kibana did not become available within 3 minutes. Skipping template import."
-        Write-Warn "  Run manually later:  scripts\import_kibana_template.ps1"
     } else {
-        try {
-            # curl is available on Windows 10 1803+ and handles multipart/form-data correctly
-            $result = & curl.exe -s --max-time 30 `
-                -u "${KibUser}:${KibPass}" `
-                -X POST "$KibanaUrl/api/saved_objects/_import?overwrite=true" `
-                -H "kbn-xsrf: true" `
-                -F "file=@`"$TemplateNdjson`"" 2>&1
+        $RawCreds = (Get-Content $CredsFile -Raw).Trim()
+        $ColonIdx = $RawCreds.IndexOf(":")
+        if ($ColonIdx -le 0) {
+            Write-Warn "elastic-credentials.txt does not contain a valid 'user:password' entry — skipping import."
+        } else {
+            $KibUser  = $RawCreds.Substring(0, $ColonIdx)
+            $KibPass  = $RawCreds.Substring($ColonIdx + 1)
+            $B64Creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${KibUser}:${KibPass}"))
 
-            $parsed = $result | ConvertFrom-Json -ErrorAction SilentlyContinue
-            if ($parsed -and $parsed.success -eq $true) {
-                Write-Ok "  Threat Hunt Report Template imported ($($parsed.successCount) objects)."
-            } elseif ($parsed -and $parsed.errors) {
-                Write-Warn "  Template import had errors: $($parsed.errors | ConvertTo-Json -Compress)"
-            } else {
-                Write-Warn "  Template import returned unexpected response: $result"
+            $KibReady = $false
+            $Deadline = (Get-Date).AddMinutes(5)
+            Write-Log "  Waiting for Kibana API to become available..."
+            while ((Get-Date) -lt $Deadline) {
+                try {
+                    $resp = Invoke-WebRequest -Uri "$KibanaUrl/api/status" `
+                        -Headers @{Authorization = "Basic $B64Creds"} `
+                        -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+                    if ($resp.StatusCode -eq 200) { $KibReady = $true; break }
+                } catch { }
+                Start-Sleep -Seconds 5
             }
-        } catch {
-            Write-Warn "  Template import failed: $_"
-            Write-Warn "  Run manually later:  scripts\import_kibana_template.ps1"
+
+            if (-not $KibReady) {
+                Write-Warn "Kibana did not become available within 5 minutes. Skipping template import."
+            } else {
+                $result = & curl.exe -s --max-time 30 `
+                    -u "${KibUser}:${KibPass}" `
+                    -X POST "$KibanaUrl/api/saved_objects/_import?overwrite=true" `
+                    -H "kbn-xsrf: true" `
+                    -F "file=@`"$TemplateNdjson`"" 2>&1
+                $parsed = $result | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($parsed -and $parsed.success -eq $true) {
+                    Write-Ok "  Threat Hunt Report Template imported ($($parsed.successCount) objects)."
+                } else {
+                    Write-Warn "  Template import returned unexpected response: $result"
+                }
+            }
         }
     }
 } else {
     Write-Warn "Template file not found at $TemplateNdjson — skipping import."
 }
 
-Write-Log "Step 2/4 - caldera (MITRE Caldera C2)..."
-& $vagrantExe up caldera --provision
-if ($LASTEXITCODE -ne 0) { Write-Die "caldera provisioning failed. Check the output above for details." }
-Write-Ok "caldera is up."
-
-# --- Load Hunt Lab abilities and adversary into Caldera ---
-Write-Log "Loading Hunt Lab cloud-attack abilities into Caldera..."
+# --- Load Hunt Lab abilities into Caldera ---
+Write-Log "Loading Hunt Lab abilities into Caldera..."
 $CalderaSetup = Join-Path $PSScriptRoot "scripts\caldera_setup.py"
 if ((Test-Path $CalderaSetup) -and (Get-Command python -ErrorAction SilentlyContinue)) {
     try {
@@ -373,33 +410,41 @@ if ((Test-Path $CalderaSetup) -and (Get-Command python -ErrorAction SilentlyCont
         Write-Warn "Caldera setup failed: $_ — run manually: python scripts\caldera_setup.py"
     }
 } else {
-    Write-Warn "caldera_setup.py or python not found — run manually after setup: python scripts\caldera_setup.py"
+    Write-Warn "caldera_setup.py or python not found — run manually: python scripts\caldera_setup.py"
 }
 
-Write-Log "Step 3/4 - cloud-sim (LocalStack + CloudTrail + Filebeat)..."
-& $vagrantExe up cloud-sim --provision
-if ($LASTEXITCODE -ne 0) { Write-Die "cloud-sim provisioning failed. Check the output above for details." }
-Write-Ok "cloud-sim is up."
+# --- 8. Bring up Windows VMs ---
+Write-Log "Step 2/4 - win-dc (Active Directory DC)..."
+& $vagrantExe up win-dc --provision
+if ($LASTEXITCODE -ne 0) { Write-Die "win-dc provisioning failed. Check the output above for details." }
+Write-Ok "win-dc is up."
 
-Write-Log "Step 4/4 - win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
+Write-Log "Step 3/4 - win-server (Domain member server)..."
+& $vagrantExe up win-server --provision
+if ($LASTEXITCODE -ne 0) { Write-Die "win-server provisioning failed. Check the output above for details." }
+Write-Ok "win-server is up."
+
+Write-Log "Step 4/4 - win11-victim (Windows 11)..."
 & $vagrantExe up win11-victim --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "win11-victim provisioning failed. Check the output above for details." }
 Write-Ok "win11-victim is up."
 
-# --- 8. Print access info ---
-$credsFile = Join-Path $PSScriptRoot "elastic-credentials.txt"
+# --- 9. Print access info ---
+$credsFile    = Join-Path $PSScriptRoot "elastic-credentials.txt"
 $elasticCreds = if (Test-Path $credsFile) { (Get-Content $credsFile -Raw).Trim() } else { "see elastic-credentials.txt" }
 
 Write-Log ""
 Write-Log "================================================================="
 Write-Ok  "  Lab is up and ready!"
 Write-Log ""
-Write-Log "  Kibana (SIEM):   http://192.168.56.10:5601"
-Write-Log "  Caldera (C2):    http://192.168.56.30:8888   (admin / admin)"
-Write-Log "  LocalStack API:  http://192.168.56.40:4566"
+Write-Log "  Kibana (SIEM):   http://${HostIP}:5601"
+Write-Log "  Caldera (C2):    http://${HostIP}:8888   (admin / admin)"
+Write-Log "  LocalStack API:  http://${HostIP}:4566"
 Write-Log "  Elastic creds:   $elasticCreds"
 Write-Log ""
 Write-Log "  RDP into victim: vagrant rdp win11-victim"
-Write-Log "  SSH into VMs:    vagrant ssh elastic-siem"
-Write-Log "  Tear it down:    vagrant destroy -f"
+Write-Log "  RDP into DC:     vagrant rdp win-dc"
+Write-Log "  Docker logs:     docker compose -f docker/docker-compose.yml logs -f"
+Write-Log "  Tear down VMs:   vagrant destroy -f"
+Write-Log "  Tear down Docker:docker compose -f docker/docker-compose.yml down -v"
 Write-Log "================================================================="
