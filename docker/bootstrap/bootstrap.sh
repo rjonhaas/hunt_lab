@@ -300,6 +300,10 @@ if command -v awslocal &>/dev/null || pip show awscli-local &>/dev/null 2>&1; th
     awslocal s3 mb s3://company-financials 2>/dev/null || true
     awslocal s3 mb s3://hr-data 2>/dev/null || true
     awslocal s3 mb s3://cloudtrail-logs 2>/dev/null || true
+    # Exfil destination for the DFIR-RansomHub-2025-Lab scenario
+    awslocal s3 mb s3://ransomhub-exfil-lab 2>/dev/null || true
+    awslocal s3api put-bucket-tagging --bucket ransomhub-exfil-lab \
+      --tagging 'TagSet=[{Key=hunt-lab,Value=ransomhub-recreation}]' 2>/dev/null || true
     echo '{"ssn":"123-45-6789","name":"John Doe","salary":150000}' \
       | awslocal s3 cp - s3://hr-data/employees/john_doe.json 2>/dev/null || true
     echo '{"q4_revenue":42000000,"projections":"confidential"}' \
@@ -318,6 +322,33 @@ if command -v awslocal &>/dev/null || pip show awscli-local &>/dev/null 2>&1; th
   else
     log "WARNING: LocalStack not ready — skipping resource seeding. Re-run bootstrap to retry."
   fi
+fi
+
+# ── 9. Push RansomHub recreation into Caldera ────────────────────────────────
+# Wait for Caldera's REST API, then upsert the abilities + adversary so a fresh
+# clone arrives with the DFIR-RansomHub-2025-Lab adversary already in the UI.
+# Idempotent — re-runs just refresh the existing objects.
+log "Waiting for Caldera REST API (up to 180s)..."
+CALDERA_READY=0
+for i in $(seq 1 36); do
+  if curl -sf --max-time 5 -H "KEY: ADMIN123" \
+      "http://caldera:8888/api/v2/health" -o /dev/null 2>/dev/null; then
+    CALDERA_READY=1; break
+  fi
+  sleep 5
+done
+
+if [[ "${CALDERA_READY}" -eq 1 ]]; then
+  log "Pushing DFIR-RansomHub-2025-Lab abilities + adversary to Caldera..."
+  if CALDERA_URL="http://caldera:8888" \
+     python3 /workspace/scripts/caldera_ransomhub_setup.py; then
+    log "RansomHub recreation seeded into Caldera."
+  else
+    log "WARNING: caldera_ransomhub_setup.py reported errors — check above."
+  fi
+else
+  log "WARNING: Caldera REST API not ready — skipping ability seeding."
+  log "  Re-run manually with: python3 scripts/caldera_ransomhub_setup.py"
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────

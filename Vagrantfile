@@ -215,6 +215,12 @@ Vagrant.configure("2") do |config|
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\setup_win_server_tools.ps1"
     POWERSHELL
 
+    # Pre-stage decoy "Finance" share for the DFIR-RansomHub-2025-Lab scenario.
+    # Idempotent — re-running just refreshes the contents.
+    srv.vm.provision "shell", name: "seed_ransomhub_decoy", privileged: false, inline: <<~POWERSHELL
+      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\scenarios\\ransomhub\\seed_decoy_data.ps1"
+    POWERSHELL
+
     # Deploy Caldera sandcat agent automatically during provisioning
     srv.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~'POWERSHELL'
       powercfg /change standby-timeout-ac 0 | Out-Null
