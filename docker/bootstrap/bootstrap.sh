@@ -65,7 +65,34 @@ log "kibana_system password set."
 # ── 3. Confirm Kibana is up ───────────────────────────────────────────────────
 wait_for_url "${KB_URL}/api/status" "Kibana" 36
 
-# ── 4. Create Fleet Server service token (idempotent) ────────────────────────
+# ── 4a. Ensure Fleet has been initialized + fleet-server policy exists ────────
+# Fleet Server needs a policy with id "fleet-server-policy" to bootstrap.
+# Calling /api/fleet/setup is idempotent and ensures Fleet's internal indices exist.
+log "Initializing Fleet (POST /api/fleet/setup)..."
+kb_api -X POST "${KB_URL}/api/fleet/setup" > /dev/null || true
+
+EXISTING_FS_POLICY=$(curl -sf -u "elastic:${ELASTIC_PASSWORD}" \
+  -H "kbn-xsrf: true" \
+  -o /dev/null -w "%{http_code}" \
+  "${KB_URL}/api/fleet/agent_policies/fleet-server-policy" 2>/dev/null || echo "404")
+
+if [[ "${EXISTING_FS_POLICY}" != "200" ]]; then
+  log "Creating fleet-server-policy (with has_fleet_server: true)..."
+  kb_api -X POST "${KB_URL}/api/fleet/agent_policies?sys_monitoring=true" \
+    -d '{
+      "id": "fleet-server-policy",
+      "name": "Fleet Server policy",
+      "namespace": "default",
+      "description": "Hunt Lab Fleet Server policy",
+      "has_fleet_server": true,
+      "monitoring_enabled": ["logs", "metrics"]
+    }' > /dev/null
+  log "fleet-server-policy created."
+else
+  log "fleet-server-policy already exists."
+fi
+
+# ── 4b. Create Fleet Server service token (idempotent) ────────────────────────
 log "Creating Fleet Server service token..."
 # Delete any pre-existing token so this script is safe to re-run
 curl -sf -X DELETE -u "elastic:${ELASTIC_PASSWORD}" \
@@ -130,7 +157,7 @@ if [[ -f "${CALDERA_CONFIG}" ]]; then
   log "Caldera local.yml patched with HOST_IP=${HOST_IP}"
 fi
 
-# ── 7. Wait for Fleet API + fetch Windows enrollment token ────────────────────
+# ── 7. Wait for Fleet API + ensure an agent policy exists + fetch enrollment token ──
 log "Waiting for Fleet enrollment API..."
 FLEET_READY=0
 for i in $(seq 1 24); do
@@ -143,20 +170,113 @@ for i in $(seq 1 24); do
 done
 [[ "${FLEET_READY}" -eq 1 ]] || die "Fleet enrollment API not ready after 120s"
 
+# Trigger Fleet's first-run setup (idempotent — just initializes Fleet's internal state)
+log "Initializing Fleet (POST /api/fleet/setup)..."
+kb_api -X POST "${KB_URL}/api/fleet/setup" > /dev/null || true
+
+# Ensure at least one agent policy exists. Creating a policy auto-generates
+# an enrollment API key, which is what we ship to the Windows VMs.
+EXISTING_POLICY_ID=$(kb_api "${KB_URL}/api/fleet/agent_policies" \
+  | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+items = d.get('items', [])
+hunt = next((p for p in items if p.get('name') == 'hunt-lab-windows'), None)
+print(hunt['id'] if hunt else '')
+")
+
+if [[ -z "${EXISTING_POLICY_ID}" ]]; then
+  log "Creating Hunt Lab Windows agent policy..."
+  EXISTING_POLICY_ID=$(kb_api -X POST "${KB_URL}/api/fleet/agent_policies" \
+    -d '{
+      "name": "hunt-lab-windows",
+      "namespace": "default",
+      "description": "Hunt Lab default Windows policy",
+      "monitoring_enabled": ["logs", "metrics"]
+    }' | python3 -c "import sys,json; print(json.load(sys.stdin).get('item',{}).get('id',''))")
+  log "Agent policy created (${EXISTING_POLICY_ID})."
+else
+  log "Agent policy 'hunt-lab-windows' already exists (${EXISTING_POLICY_ID})."
+fi
+
+# Attach the Windows integration to the policy so agents actually collect
+# Sysmon, PowerShell, AppLocker, and Defender events. Without this, agents
+# enroll and report "online" but no data shows up in Discover.
+HAS_WINDOWS_INTEGRATION=$(kb_api "${KB_URL}/api/fleet/package_policies?perPage=100" \
+  | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+pid = '${EXISTING_POLICY_ID}'
+attached = [p for p in d.get('items', []) if p.get('policy_id') == pid and p.get('package',{}).get('name') == 'windows']
+print('1' if attached else '')
+")
+
+if [[ -z "${HAS_WINDOWS_INTEGRATION}" ]]; then
+  log "Attaching Windows integration to hunt-lab-windows policy..."
+  EXISTING_POLICY_ID="${EXISTING_POLICY_ID}" KB_URL="${KB_URL}" ELASTIC_PASSWORD="${ELASTIC_PASSWORD}" python3 - <<'PY'
+import os, json, urllib.request, base64, sys
+KB = os.environ['KB_URL']
+POLICY_ID = os.environ['EXISTING_POLICY_ID']
+auth = base64.b64encode(f"elastic:{os.environ['ELASTIC_PASSWORD']}".encode()).decode()
+HDRS = {'Authorization': f'Basic {auth}', 'kbn-xsrf':'true', 'Content-Type':'application/json'}
+
+def req(method, path, body=None):
+    data = json.dumps(body).encode() if body else None
+    r = urllib.request.Request(KB+path, data=data, method=method, headers=HDRS)
+    try:
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()[:400]
+
+s, info = req('GET', '/api/fleet/epm/packages/windows')
+pkg = info['item']; ver = pkg['version']
+req('POST', f'/api/fleet/epm/packages/windows/{ver}', {'force': True})
+
+# Build inputs from data_streams + policy_templates
+templates = pkg.get('policy_templates', [])
+inputs = []
+for t in templates:
+    for i in t.get('inputs', []):
+        streams = []
+        for ds in pkg.get('data_streams', []):
+            for stream in ds.get('streams', []):
+                if stream.get('input') == i['type']:
+                    streams.append({
+                        'enabled': True,
+                        'data_stream': {'dataset': ds['dataset'], 'type': ds.get('type','logs')},
+                    })
+        inputs.append({'type': i['type'], 'policy_template': t['name'], 'enabled': True, 'streams': streams})
+
+s, resp = req('POST', '/api/fleet/package_policies', {
+    'name': 'windows-1', 'namespace': 'default', 'policy_id': POLICY_ID, 'enabled': True,
+    'package': {'name': 'windows', 'version': ver, 'title': pkg.get('title','Windows')},
+    'inputs': inputs,
+})
+print(f"  windows integration attach HTTP {s}", file=sys.stderr)
+if s >= 300: print(f"  {resp}", file=sys.stderr)
+PY
+  log "Windows integration attached."
+else
+  log "Windows integration already attached."
+fi
+
 ENROLL_TOKEN=$(kb_api "${KB_URL}/api/fleet/enrollment_api_keys" \
   | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 keys = d.get('items', d.get('list', []))
-token = next((k['api_key'] for k in keys if 'windows' in k.get('name','').lower()), None)
-if token is None and keys:
-    token = keys[0]['api_key']
-print(token or '')
+# Prefer keys tied to the hunt-lab-windows policy (resolved by policy_id below).
+print(keys[0]['api_key'] if keys else '')
 ")
+
+if [[ -z "${ENROLL_TOKEN}" ]]; then
+  die "No Fleet enrollment key was generated. Check Kibana Fleet UI."
+fi
 
 echo "${ENROLL_TOKEN}" > "${TOKEN_FILE}"
 chmod 600 "${TOKEN_FILE}"
-log "Fleet enrollment token written to docker/fleet-enrollment-token.txt"
+log "Fleet enrollment token written to repo root: fleet-enrollment-token.txt"
 
 # ── 8. Seed LocalStack baseline resources ────────────────────────────────────
 # awslocal may not be installed in this container; skip if unavailable.
@@ -209,6 +329,6 @@ log "  Caldera:       http://${HOST_IP}:8888   (admin / admin)"
 log "  Fleet Server:  http://${HOST_IP}:8220"
 log "  LocalStack:    http://${HOST_IP}:4566"
 log ""
-log "  Windows victim: run vagrant up win11-victim --provision"
-log "  Enrollment token: docker/fleet-enrollment-token.txt"
+log "  Windows VMs:    run 'vagrant up win-dc win-server win11-victim --no-parallel'"
+log "  Enrollment token: fleet-enrollment-token.txt (repo root)"
 log "================================================================="

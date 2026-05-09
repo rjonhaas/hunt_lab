@@ -3,7 +3,7 @@
 # Installs Sysmon (SwiftOnSecurity config) and Elastic Agent enrolled with Fleet.
 #
 # Reads:
-#   C:\vagrant\fleet-enrollment-token.txt   — written by install_elastic.sh
+#   C:\vagrant\fleet-enrollment-token.txt   — written by docker/setup.sh
 
 param()
 
@@ -17,8 +17,8 @@ function Write-Log {
     Write-Host "[win-server] $Message"
 }
 
-$FleetServer   = "http://192.168.56.1:8220"
-$CalderaServer = "http://192.168.56.1:8888"
+$FleetServer   = "http://192.168.56.10:8220"
+$CalderaServer = "http://192.168.56.10:8888"
 $TokenFile     = "C:\vagrant\fleet-enrollment-token.txt"
 
 $TempDir   = "C:\Windows\Temp\lab-setup"
@@ -75,14 +75,14 @@ if (-not (Test-Path $TokenFile)) {
 }
 $EnrollToken = (Get-Content $TokenFile -Raw).Trim()
 if ([string]::IsNullOrEmpty($EnrollToken)) {
-    Write-Error "Fleet enrollment token is empty. Check elastic-siem provisioning logs."
+    Write-Error "Fleet enrollment token is empty. Check 'docker compose logs bootstrap'."
     exit 1
 }
 Write-Log "Token found."
 
 # ── 3. Install Elastic Agent ──────────────────────────────────────────────────
 Write-Log "Downloading Elastic Agent..."
-$AgentVersion = "8.19.14"   # Must match elastic-siem version
+$AgentVersion = "8.19.14"   # Must match ELASTIC_VERSION in docker/.env
 $AgentZip     = "$AgentDir\elastic-agent.zip"
 $AgentUrl     = "https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-${AgentVersion}-windows-x86_64.zip"
 

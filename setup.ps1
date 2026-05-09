@@ -4,15 +4,15 @@
     Bootstrap script for the Threat Hunting Lab (Windows host).
 .DESCRIPTION
     Installs all prerequisites (Vagrant, vagrant-vmware-utility, vagrant-vmware-desktop
-        plugin) if missing, then provisions four VMs in the correct order:
-      1. elastic-siem  (Elasticsearch + Kibana + Fleet Server)
-      2. caldera       (MITRE Caldera C2)
-            3. cloud-sim     (LocalStack + CloudTrail + Filebeat)
-            4. win11-victim  (Windows 11 + Sysmon + Elastic Agent)
+        plugin) if missing, then brings up the lab in this order:
+      1. Docker stack  (Elasticsearch + Kibana + Fleet Server + Caldera + LocalStack)
+      2. win-dc        (Windows Server 2022 — Active Directory DC)
+      3. win-server    (Windows Server 2022 — Domain member)
+      4. win11-victim  (Windows 11 + Sysmon + Elastic Agent)
 
-    Only prerequisite requiring manual install beforehand:
-      VMware Workstation Pro 17+
-      https://www.vmware.com/products/workstation-pro.html
+    Prerequisites requiring manual install beforehand:
+      VMware Workstation Pro 17+   https://www.vmware.com/products/workstation-pro.html
+      Docker Desktop               https://www.docker.com/products/docker-desktop/
 .EXAMPLE
     # From an elevated PowerShell prompt in the hunt_lab directory:
     Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -283,8 +283,16 @@ if ($boxList -notmatch "gusztavvargadr/windows-server-2022-standard") {
 } else {
     Write-Ok "Windows Server 2022 box already present."
 }
+if ($boxList -notmatch "bento/ubuntu-22.04") {
+    Write-Log "Downloading Ubuntu 22.04 box (~700 MB) for the docker-host VM..."
+    & $vagrantExe box add bento/ubuntu-22.04 --provider vmware_desktop
+    if ($LASTEXITCODE -ne 0) { Write-Die "Ubuntu 22.04 box download failed (exit $LASTEXITCODE)." }
+    Write-Ok "Ubuntu 22.04 box downloaded."
+} else {
+    Write-Ok "Ubuntu 22.04 box already present."
+}
 
-# --- 7. Start Docker services ---
+# --- 7. Bring up docker-host (Linux VM running the Docker Compose stack) ---
 Write-Log ""
 Write-Log "================================================================="
 Write-Log "  All prerequisites satisfied. Starting the lab..."
@@ -292,58 +300,12 @@ Write-Log "  Estimated time: 25-40 minutes on first run"
 Write-Log "================================================================="
 Write-Log ""
 
-# Verify Docker is available
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Die "Docker is not installed or not on PATH.`n  Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
-}
-docker info --format "{{.ServerVersion}}" 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Die "Docker daemon is not running. Start Docker Desktop and try again."
-}
+Write-Log "Step 1/4 - docker-host (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
+& $vagrantExe up docker-host --provision
+if ($LASTEXITCODE -ne 0) { Write-Die "docker-host provisioning failed. Run 'vagrant ssh docker-host' and check 'docker compose logs' inside the VM." }
+Write-Ok "docker-host is up."
 
-$DockerDir = Join-Path $PSScriptRoot "docker"
-if (-not (Test-Path (Join-Path $DockerDir ".env"))) {
-    Copy-Item (Join-Path $DockerDir ".env.example") (Join-Path $DockerDir ".env")
-    Write-Warn "docker/.env created from .env.example."
-    Write-Warn "Edit docker/.env and set HOST_IP to 192.168.56.1 (the VMware host-only adapter IP)."
-    Write-Warn "Then re-run setup.ps1."
-    exit 1
-}
-
-$HostIP = (Select-String "^HOST_IP=" (Join-Path $DockerDir ".env") | Select-Object -First 1).Line -replace "^HOST_IP=",""
-if ([string]::IsNullOrWhiteSpace($HostIP) -or $HostIP.Trim() -eq "192.168.1.100") {
-    Write-Die "HOST_IP in docker/.env is still the placeholder.`n  Set it to 192.168.56.1 (VMware host-only adapter) and re-run."
-}
-
-Write-Log "Step 1/4 - Docker services (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
-Push-Location $DockerDir
-try {
-    & docker compose pull
-    if ($LASTEXITCODE -ne 0) { Write-Die "docker compose pull failed." }
-
-    & docker compose up -d elasticsearch kibana caldera localstack
-    if ($LASTEXITCODE -ne 0) { Write-Die "docker compose up failed." }
-
-    Write-Log "  Running bootstrap (sets passwords, Fleet token)..."
-    & docker compose run --rm bootstrap
-    if ($LASTEXITCODE -ne 0) { Write-Die "Bootstrap container failed. Run: docker compose logs bootstrap" }
-
-    & docker compose up -d fleet-server
-    if ($LASTEXITCODE -ne 0) { Write-Die "fleet-server failed to start." }
-
-    & docker compose up -d filebeat cloudtrail-gen
-    if ($LASTEXITCODE -ne 0) { Write-Die "filebeat/cloudtrail-gen failed to start." }
-} finally {
-    Pop-Location
-}
-Write-Ok "Docker services are up."
-
-# Write elastic-credentials.txt to the repo root for Kibana import and display
-$ElasticPass = (Select-String "^ELASTIC_PASSWORD=" (Join-Path $DockerDir ".env") | Select-Object -First 1).Line -replace "^ELASTIC_PASSWORD=",""
-if (-not [string]::IsNullOrWhiteSpace($ElasticPass)) {
-    Set-Content -Path (Join-Path $PSScriptRoot "elastic-credentials.txt") -Value "elastic:$($ElasticPass.Trim())" -NoNewline
-    Write-Ok "elastic-credentials.txt written."
-}
+$HostIP = "192.168.56.10"
 
 # --- Import Kibana threat hunt report template ---
 $KibanaUrl      = "http://${HostIP}:5601"
@@ -444,7 +406,6 @@ Write-Log "  Elastic creds:   $elasticCreds"
 Write-Log ""
 Write-Log "  RDP into victim: vagrant rdp win11-victim"
 Write-Log "  RDP into DC:     vagrant rdp win-dc"
-Write-Log "  Docker logs:     docker compose -f docker/docker-compose.yml logs -f"
-Write-Log "  Tear down VMs:   vagrant destroy -f"
-Write-Log "  Tear down Docker:docker compose -f docker/docker-compose.yml down -v"
+Write-Log "  Docker logs:     vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose logs -f'"
+Write-Log "  Tear down all:   vagrant destroy -f"
 Write-Log "================================================================="

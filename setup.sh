@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # setup.sh
 # Bootstrap script for the Threat Hunting Lab (Linux / macOS host).
-# Starts Docker services first, then provisions the three Windows VMs.
+# Brings up the docker-host Linux VM (which runs the Docker stack inside)
+# and the three Windows VMs.
 #
 # Prerequisites (must be manually installed before running this script):
-#   - Docker Engine 24+ with Compose v2  https://docs.docker.com/engine/install/
 #   - VMware Workstation Pro (Linux) or VMware Fusion Pro (macOS)
 #   - Vagrant                             https://developer.hashicorp.com/vagrant/install
 #   - vagrant-vmware-desktop plugin       (installed automatically below)
@@ -25,27 +25,20 @@ log()  { echo -e "${GREEN}[setup]${NC} $*"; }
 warn() { echo -e "${YELLOW}[setup]${NC} WARNING: $*"; }
 die()  { echo -e "${RED}[setup] ERROR:${NC} $*" >&2; exit 1; }
 
-# ── 1. Check Docker ───────────────────────────────────────────────────────────
-log "Checking Docker..."
-command -v docker &>/dev/null || die "Docker is not installed.\n  See: https://docs.docker.com/engine/install/"
-docker compose version &>/dev/null 2>&1 || die "Docker Compose v2 not found. Update Docker Engine to 24+."
-docker info &>/dev/null 2>&1 || die "Docker daemon is not running. Start it and try again."
-log "Docker OK."
-
-# ── 2. Check VMware ───────────────────────────────────────────────────────────
+# ── 1. Check VMware ───────────────────────────────────────────────────────────
 log "Checking VMware..."
 if ! command -v vmrun &>/dev/null; then
   die "VMware Workstation / Fusion does not appear to be installed or vmrun is not on PATH."
 fi
 log "VMware found."
 
-# ── 3. Check Vagrant ──────────────────────────────────────────────────────────
+# ── 2. Check Vagrant ──────────────────────────────────────────────────────────
 log "Checking Vagrant..."
 command -v vagrant &>/dev/null || die "Vagrant is not installed.\n  Install: https://developer.hashicorp.com/vagrant/install"
 VAGRANT_VERSION=$(vagrant --version | grep -oP '\d+\.\d+\.\d+')
 log "Vagrant ${VAGRANT_VERSION} found."
 
-# ── 4. Install vagrant-vmware-utility service (Linux only) ────────────────────
+# ── 3. Install vagrant-vmware-utility service (Linux only) ────────────────────
 if [[ "$(uname)" == "Linux" ]]; then
   if ! systemctl is-active --quiet vagrant-vmware-utility 2>/dev/null; then
     warn "vagrant-vmware-utility is not running. Attempting installation..."
@@ -65,7 +58,7 @@ if [[ "$(uname)" == "Linux" ]]; then
   fi
 fi
 
-# ── 5. Install vagrant-vmware-desktop plugin ─────────────────────────────────
+# ── 4. Install vagrant-vmware-desktop plugin ─────────────────────────────────
 log "Checking Vagrant plugin: ${PLUGIN_NAME}..."
 if ! vagrant plugin list 2>/dev/null | grep -q "${PLUGIN_NAME}"; then
   log "Installing ${PLUGIN_NAME}..."
@@ -75,8 +68,12 @@ else
   log "Plugin ${PLUGIN_NAME} already installed."
 fi
 
-# ── 6. Add Windows Vagrant boxes ─────────────────────────────────────────────
-log "Checking for Windows Vagrant boxes..."
+# ── 5. Add Vagrant boxes ─────────────────────────────────────────────────────
+log "Checking for Vagrant boxes..."
+if ! vagrant box list 2>/dev/null | grep -q "bento/ubuntu-22.04"; then
+  log "Downloading Ubuntu 22.04 box (~700 MB) for the docker-host VM..."
+  vagrant box add bento/ubuntu-22.04 --provider vmware_desktop
+fi
 if ! vagrant box list 2>/dev/null | grep -q "gusztavvargadr/windows-11"; then
   log "Downloading Windows 11 box (~8-12 GB, slowest step)..."
   vagrant box add gusztavvargadr/windows-11 --provider vmware_desktop
@@ -86,7 +83,7 @@ if ! vagrant box list 2>/dev/null | grep -q "gusztavvargadr/windows-server-2022-
   vagrant box add gusztavvargadr/windows-server-2022-standard --provider vmware_desktop
 fi
 
-# ── 7. Start Docker services ──────────────────────────────────────────────────
+# ── 6. Bring up the lab ───────────────────────────────────────────────────────
 log ""
 log "================================================================="
 log "  All prerequisites satisfied. Starting the lab..."
@@ -94,34 +91,12 @@ log "  Estimated time: 25-40 minutes on first run"
 log "================================================================="
 log ""
 
-DOCKER_DIR="${SCRIPT_DIR}/docker"
+HOST_IP="192.168.56.10"
 
-if [[ ! -f "${DOCKER_DIR}/.env" ]]; then
-  cp "${DOCKER_DIR}/.env.example" "${DOCKER_DIR}/.env"
-  warn ".env created from .env.example"
-  warn "Edit docker/.env — set HOST_IP to this machine's IP reachable by the VMs, then re-run."
-  exit 1
-fi
+log "Step 1/4 - docker-host (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
+vagrant up docker-host --provision
+log "docker-host is up."
 
-HOST_IP=$(grep "^HOST_IP=" "${DOCKER_DIR}/.env" | cut -d= -f2 | tr -d '[:space:]' || true)
-if [[ -z "${HOST_IP}" || "${HOST_IP}" == "192.168.1.100" ]]; then
-  warn "HOST_IP in docker/.env is still the placeholder. Set it to your machine's IP."
-  read -r -p "[setup] Continue anyway? (y/N) " confirm
-  [[ "${confirm}" =~ ^[Yy]$ ]] || exit 1
-fi
-
-log "Step 1/4 - Docker services (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
-pushd "${DOCKER_DIR}" > /dev/null
-docker compose pull
-docker compose up -d elasticsearch kibana caldera localstack
-log "  Running bootstrap (sets passwords, Fleet token)..."
-docker compose run --rm bootstrap
-docker compose up -d fleet-server
-docker compose up -d filebeat cloudtrail-gen
-popd > /dev/null
-log "Docker services are up."
-
-# ── 8. Bring up Windows VMs ───────────────────────────────────────────────────
 log "Step 2/4 - win-dc (Active Directory DC, includes reboot after promotion)..."
 vagrant up win-dc --provision
 log "win-dc is up."
@@ -134,8 +109,8 @@ log "Step 4/4 - win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
 vagrant up win11-victim --provision
 log "win11-victim is up."
 
-# ── 9. Print access info ──────────────────────────────────────────────────────
-ELASTIC_PASS=$(grep "^ELASTIC_PASSWORD=" "${DOCKER_DIR}/.env" | cut -d= -f2 | tr -d '[:space:]' || echo "<see docker/.env>")
+# ── 7. Print access info ──────────────────────────────────────────────────────
+ELASTIC_PASS=$(grep "^ELASTIC_PASSWORD=" "${SCRIPT_DIR}/docker/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || echo "<see docker/.env on docker-host>")
 
 log ""
 log "================================================================="
@@ -156,7 +131,6 @@ log "  Domain user pass: Lab!Password1"
 log ""
 log "  RDP into victim: vagrant rdp win11-victim"
 log "  RDP into DC:     vagrant rdp win-dc"
-log "  Docker logs:     docker compose -f docker/docker-compose.yml logs -f"
-log "  Tear down VMs:   vagrant destroy -f"
-log "  Tear down Docker:docker compose -f docker/docker-compose.yml down -v"
+log "  Docker logs:     vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose logs -f'"
+log "  Tear down all:   vagrant destroy -f"
 log "================================================================="

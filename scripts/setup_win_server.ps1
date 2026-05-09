@@ -5,7 +5,7 @@
 #
 # Reads:
 #   C:\vagrant\domain-info.txt              — written by setup_dc_post_reboot.ps1
-#   C:\vagrant\fleet-enrollment-token.txt   — written by install_elastic.sh
+#   C:\vagrant\fleet-enrollment-token.txt   — written by docker/setup.sh
 
 param()
 
@@ -30,7 +30,7 @@ if (-not (Test-Path $DomainInfoFile)) {
     exit 1
 }
 if (-not (Test-Path $TokenFile)) {
-    Write-Error "fleet-enrollment-token.txt not found. Run 'vagrant up elastic-siem' first."
+    Write-Error "fleet-enrollment-token.txt not found. Run 'bash docker/setup.sh' first."
     exit 1
 }
 

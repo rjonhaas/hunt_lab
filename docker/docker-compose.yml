@@ -8,10 +8,9 @@
 #   docker compose up -d
 #   docker compose logs -f bootstrap   # watch first-run setup
 #
-# The Windows 11 victim VM (win11-victim) still needs to be provisioned
-# separately with Vagrant, pointing at this host's IP for Fleet enrollment.
-
-version: "3.8"
+# The Windows VMs (win-dc, win-server, win11-victim) still need to be
+# provisioned separately with Vagrant, pointing at this host's IP for Fleet
+# enrollment.
 
 # ── Shared network ────────────────────────────────────────────────────────────
 networks:
@@ -107,13 +106,11 @@ services:
   #   - Patches HOST_IP into docker/config/caldera/local.yml
   # Exits 0 on success; a non-zero exit is surfaced by `docker compose logs bootstrap`.
   bootstrap:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.19.14}
+    image: python:3.11-slim
     container_name: bootstrap
     restart: "no"
     depends_on:
       elasticsearch:
-        condition: service_healthy
-      kibana:
         condition: service_healthy
     environment:
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
@@ -123,7 +120,11 @@ services:
     volumes:
       - ./bootstrap:/bootstrap:ro
       - ../:/workspace         # repo root — reads docker/.env, writes fleet-enrollment-token.txt
-    entrypoint: ["bash", "/bootstrap/bootstrap.sh"]
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq curl; }
+        exec bash /bootstrap/bootstrap.sh
     networks:
       - hunt_net
 
@@ -144,8 +145,9 @@ services:
       - FLEET_SERVER_ENABLE=1
       - FLEET_SERVER_HOST=0.0.0.0
       - FLEET_SERVER_PORT=8220
+      - FLEET_SERVER_INSECURE_HTTP=true
       - FLEET_SERVER_ELASTICSEARCH_HOST=http://elasticsearch:9200
-      - FLEET_SERVER_SERVICE_TOKEN=${FLEET_SERVER_SERVICE_TOKEN:?Run bootstrap first: docker compose run bootstrap}
+      - "FLEET_SERVER_SERVICE_TOKEN=${FLEET_SERVER_SERVICE_TOKEN:-}"
       - FLEET_SERVER_POLICY_ID=fleet-server-policy
       - KIBANA_FLEET_HOST=http://kibana:5601
       - FLEET_INSECURE=true
@@ -163,7 +165,7 @@ services:
 
   # ── MITRE Caldera ───────────────────────────────────────────────────────────
   caldera:
-    image: ghcr.io/mitre/caldera:5.0.0
+    image: ghcr.io/mitre/caldera:latest
     container_name: caldera
     restart: unless-stopped
     ports:
@@ -252,9 +254,11 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
     volumes:
       - ./config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - ./cloudtrail:/var/log/localstack/cloudtrail:ro
-    command: ["filebeat", "-e", "-strict.perms=false"]
+    command: ["filebeat", "-e", "--strict.perms=false"]
     networks:
       - hunt_net

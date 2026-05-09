@@ -4,8 +4,8 @@
 #   - Installs Sysmon with SwiftOnSecurity config
 #   - Installs Elastic Agent and enrolls it in Fleet
 #
-# Reads fleet-enrollment-token.txt written by install_elastic.sh via the
-# shared /vagrant (C:\vagrant) folder.
+# Reads fleet-enrollment-token.txt written by docker/setup.sh (bootstrap
+# container) via the shared /vagrant (C:\vagrant) folder.
 
 param()
 
@@ -24,8 +24,8 @@ function Write-Log {
 $TempDir      = "C:\Windows\Temp\lab-setup"
 $SysmonDir    = "$TempDir\Sysmon"
 $AgentDir     = "$TempDir\ElasticAgent"
-$FleetServer  = "http://192.168.56.1:8220"
-$CalderaServer = "http://192.168.56.1:8888"
+$FleetServer  = "http://192.168.56.10:8220"
+$CalderaServer = "http://192.168.56.10:8888"
 $TokenFile    = "C:\vagrant\fleet-enrollment-token.txt"
 
 New-Item -ItemType Directory -Force -Path $SysmonDir  | Out-Null
@@ -97,13 +97,13 @@ Write-Log "Sysmon installed."
 # ── 4. Read Fleet enrollment token ────────────────────────────────────────────
 Write-Log "Reading Fleet enrollment token..."
 if (-not (Test-Path $TokenFile)) {
-    Write-Error "Fleet enrollment token not found at $TokenFile. Ensure elastic-siem was provisioned first."
+    Write-Error "Fleet enrollment token not found at $TokenFile. Run 'bash docker/setup.sh' first."
     exit 1
 }
 
 $EnrollToken = (Get-Content $TokenFile -Raw).Trim()
 if ([string]::IsNullOrEmpty($EnrollToken)) {
-    Write-Error "Fleet enrollment token is empty. Check elastic-siem provisioning logs."
+    Write-Error "Fleet enrollment token is empty. Check 'docker compose logs bootstrap'."
     exit 1
 }
 
@@ -122,7 +122,7 @@ Write-Log "Network config done."
 
 # ── 5. Install Elastic Agent ──────────────────────────────────────────────────
 Write-Log "Downloading Elastic Agent..."
-$AgentVersion = "8.19.14"   # Must match elastic-siem version
+$AgentVersion = "8.19.14"   # Must match ELASTIC_VERSION in docker/.env
 $AgentZip     = "$AgentDir\elastic-agent.zip"
 $AgentUrl     = "https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-${AgentVersion}-windows-x86_64.zip"
 
@@ -216,14 +216,15 @@ if (-not $calderaReady) {
         Write-Log "WARNING: Failed to download sandcat (exit $LASTEXITCODE). Skipping."
     } else {
         Write-Log "Sandcat downloaded to $SandcatPath. Registering scheduled task..."
-        $Action   = New-ScheduledTaskAction -Execute $SandcatPath `
+        # Run as SYSTEM so the AtStartup trigger fires without a user login.
+        $Action    = New-ScheduledTaskAction -Execute $SandcatPath `
                         -Argument "-server $CalderaServer -group red"
-        $Trigger  = New-ScheduledTaskTrigger -AtStartup
-        $Settings = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0 `
+        $Trigger   = New-ScheduledTaskTrigger -AtStartup
+        $Principal = New-ScheduledTaskPrincipal -UserId "S-1-5-18" -LogonType ServiceAccount -RunLevel Highest
+        $Settings  = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0 `
                         -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
         Register-ScheduledTask -TaskName "WindowsSecurityUpdate" `
-            -Action $Action -Trigger $Trigger -Settings $Settings `
-            -RunLevel Highest -Force | Out-Null
+            -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Force | Out-Null
 
         Write-Log "Starting sandcat via scheduled task (survives WinRM session close)..."
         Start-ScheduledTask -TaskName "WindowsSecurityUpdate"

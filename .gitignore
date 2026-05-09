@@ -6,6 +6,11 @@
 elastic-credentials.txt
 fleet-enrollment-token.txt
 localstack-auth-token.txt
+docker/.env
+
+# ── Generated runtime data ────────────────────────────────────────────────────
+docker/cloudtrail/
+.claude/
 
 # ── Vagrant box cache ─────────────────────────────────────────────────────────
 *.box
