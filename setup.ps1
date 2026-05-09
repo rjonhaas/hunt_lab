@@ -158,11 +158,11 @@ function Find-VagrantExe {
     # 1. Already on session PATH
     $cmd = Get-Command vagrant -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
-    # 2. Known install locations
+    # 2. Known install locations (use env vars so this works on any system drive)
     $knownDirs = @(
-        "C:\Program Files\Vagrant\bin",
-        "C:\HashiCorp\Vagrant\bin",
-        "C:\Program Files (x86)\Vagrant\bin"
+        "$env:ProgramFiles\Vagrant\bin",
+        "$env:ProgramFiles\HashiCorp\Vagrant\bin",
+        "${env:ProgramFiles(x86)}\Vagrant\bin"
     )
     foreach ($d in $knownDirs) {
         $exe = Join-Path $d "vagrant.exe"

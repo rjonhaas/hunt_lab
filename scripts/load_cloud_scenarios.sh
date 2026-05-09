@@ -5,20 +5,30 @@
 
 set -euo pipefail
 
-ELASTIC_HOST="192.168.56.10"
-ES_PORT="9200"
+ELASTIC_HOST="${ELASTIC_HOST:-192.168.56.1}"
+ES_PORT="${ES_PORT:-9200}"
 INDEX_NAME="cloudtrail-scenarios"
-SCENARIOS_DIR="/vagrant/scripts/scenarios"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCENARIOS_DIR="${SCENARIOS_DIR:-${SCRIPT_DIR}/scenarios}"
 
 log() { echo "[scenarios] $*"; }
 
-# Read elastic credentials
-ELASTIC_CREDS=""
-if [[ -f /vagrant/elastic-credentials.txt ]]; then
-  ELASTIC_CREDS=$(cat /vagrant/elastic-credentials.txt)
+# Read elastic credentials — env vars take priority, then credentials file
+if [[ -n "${ELASTIC_USER:-}" && -n "${ELASTIC_PASS:-}" ]]; then
+  : # already set via environment
+else
+  # Try /workspace (Docker bootstrap mount), then repo-relative path
+  for creds_path in /workspace/elastic-credentials.txt "${SCRIPT_DIR}/../elastic-credentials.txt" /vagrant/elastic-credentials.txt; do
+    if [[ -f "${creds_path}" ]]; then
+      RAW=$(cat "${creds_path}")
+      ELASTIC_USER="${RAW%%:*}"
+      ELASTIC_PASS="${RAW#*:}"
+      break
+    fi
+  done
 fi
-ELASTIC_USER=$(echo "${ELASTIC_CREDS}" | cut -d: -f1)
-ELASTIC_PASS=$(echo "${ELASTIC_CREDS}" | cut -d: -f2)
+ELASTIC_USER="${ELASTIC_USER:-elastic}"
+ELASTIC_PASS="${ELASTIC_PASS:-}"
 AUTH="${ELASTIC_USER}:${ELASTIC_PASS}"
 
 # Wait for Elasticsearch

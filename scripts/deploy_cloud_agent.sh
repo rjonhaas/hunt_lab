@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-CALDERA_HOST="192.168.56.30"
+CALDERA_HOST="${CALDERA_HOST:-192.168.56.1}"
 CALDERA_PORT="8888"
 SANDCAT_PATH="/opt/sandcat/sandcat"
 SERVICE_FILE="/etc/systemd/system/sandcat-cloud.service"
@@ -21,7 +21,7 @@ for i in $(seq 1 20); do
     log "Caldera is reachable."
     break
   fi
-  [[ $i -eq 20 ]] && die "Caldera not reachable after 100s. Is caldera VM up?"
+  [[ $i -eq 20 ]] && die "Caldera not reachable after 100s. Is caldera running? (CALDERA_HOST=${CALDERA_HOST})"
   log "  waiting... (${i}/20)"
   sleep 5
 done

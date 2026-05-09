@@ -142,7 +142,7 @@ awslocal cloudtrail start-logging --name hunt-lab-trail &>/dev/null || true
 
 log "Scenario complete. Events written to ${EXPORT_DIR}"
 echo ""
-echo "  Hunt in Kibana: http://192.168.56.10:5601"
+echo "  Hunt in Kibana: http://${HOST_IP:-192.168.56.1}:5601"
 echo "  Index: cloudtrail-*  |  Filter: sourceIPAddress: ${ATTACKER_IP}"
 echo "  Key events: CreateUser, AttachUserPolicy, DeleteTrail"
 echo "  ATT&CK techniques: T1087.004, T1078.004, T1136.003, T1562.001"

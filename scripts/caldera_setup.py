@@ -205,7 +205,7 @@ if __name__ == "__main__":
         print(f"  1. Ensure the cloud-sim Sandcat agent is registered (group: cloud)")
         print(f"     Run:  vagrant ssh cloud-sim -c 'sudo bash /vagrant/scripts/fix_cloud_sim_pipeline.sh'")
         print(f"     Then: vagrant ssh cloud-sim -c 'sudo systemctl start sandcat'")
-        print(f"  2. Open Caldera: http://192.168.56.30:8888  (admin / admin)")
+        print(f"  2. Open Caldera: {CALDERA}  (admin / admin)")
         print(f"  3. Operations -> New Operation")
         print(f"     Adversary: 'HL: Cloud Attack Simulation'")
         print(f"     Group:     cloud")
