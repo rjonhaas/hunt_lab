@@ -107,6 +107,23 @@ foreach ($u in $users) {
 Add-ADGroupMember -Identity "Domain Admins" -Members "ajohnson" -ErrorAction SilentlyContinue
 Write-Log "  ajohnson added to Domain Admins."
 
+# Register a kerberoastable SPN on svc-deploy so the identity-chain scenario
+# (Identity-Chain-2025-Lab in Caldera) can request a TGS without scenario-time
+# setup. Idempotent.
+Write-Log "Registering kerberoastable SPN on svc-deploy..."
+try {
+    $targetSPN = "HTTP/finance.lab.local"
+    $existingSPNs = (Get-ADUser -Identity "svc-deploy" -Properties servicePrincipalName).servicePrincipalName
+    if ($existingSPNs -contains $targetSPN) {
+        Write-Log "  svc-deploy already has SPN '$targetSPN' - skipping."
+    } else {
+        Set-ADUser -Identity "svc-deploy" -ServicePrincipalNames @{Add = $targetSPN}
+        Write-Log "  Added SPN '$targetSPN' to svc-deploy."
+    }
+} catch {
+    Write-Log "  WARNING: could not register SPN on svc-deploy: $_"
+}
+
 # ── 5. Write domain-info.txt for member VMs ───────────────────────────────────
 Write-Log "Writing domain-info.txt..."
 @"

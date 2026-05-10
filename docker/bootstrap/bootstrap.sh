@@ -11,6 +11,8 @@
 #   5. Wait for Fleet API, fetch Windows enrollment token
 #   6. Write fleet-enrollment-token.txt + patch FLEET_SERVER_SERVICE_TOKEN into .env
 #   7. Seed LocalStack baseline resources (S3 buckets, IAM users)
+#   8. Push DFIR-RansomHub-2025-Lab + Identity-Chain abilities into Caldera
+#   9. Import Hunt Lab detection rules into Kibana
 
 set -euo pipefail
 
@@ -346,9 +348,58 @@ if [[ "${CALDERA_READY}" -eq 1 ]]; then
   else
     log "WARNING: caldera_ransomhub_setup.py reported errors — check above."
   fi
+
+  log "Pushing Identity-Chain-2025-Lab abilities + adversary to Caldera..."
+  if CALDERA_URL="http://caldera:8888" \
+     python3 /workspace/scripts/caldera_identity_setup.py; then
+    log "Identity chain seeded into Caldera."
+  else
+    log "WARNING: caldera_identity_setup.py reported errors — check above."
+  fi
 else
   log "WARNING: Caldera REST API not ready — skipping ability seeding."
-  log "  Re-run manually with: python3 scripts/caldera_ransomhub_setup.py"
+  log "  Re-run manually with:"
+  log "    python3 scripts/caldera_ransomhub_setup.py"
+  log "    python3 scripts/caldera_identity_setup.py"
+fi
+
+# ── 10. Import Hunt Lab detection rules ──────────────────────────────────────
+# Imports the curated rule set under kibana/detection_rules/ so alerts fire as
+# soon as the Caldera abilities run. Idempotent — overwrite=true rewrites by
+# rule_id on every bootstrap. Failures are non-fatal so a Kibana hiccup doesn't
+# break the whole stack-up.
+RULES_DIR="/workspace/kibana/detection_rules"
+if compgen -G "${RULES_DIR}/*.ndjson" > /dev/null; then
+  log "Initializing detection engine signals index..."
+  curl -sf -u "elastic:${ELASTIC_PASSWORD}" \
+    -H "kbn-xsrf: true" \
+    -X POST "${KB_URL}/api/detection_engine/index" \
+    > /dev/null 2>&1 || true
+
+  for ndjson in "${RULES_DIR}"/*.ndjson; do
+    name=$(basename "${ndjson}")
+    log "Importing detection rules: ${name}"
+    HTTP=$(curl -s -o /tmp/rule-import.out -w "%{http_code}" \
+      -u "elastic:${ELASTIC_PASSWORD}" \
+      -H "kbn-xsrf: true" \
+      -X POST "${KB_URL}/api/detection_engine/rules/_import?overwrite=true&overwrite_exceptions=true&overwrite_action_connectors=true" \
+      -F "file=@${ndjson}")
+    if [[ "${HTTP}" == "200" ]]; then
+      SUMMARY=$(python3 -c "
+import json, sys
+d = json.load(open('/tmp/rule-import.out'))
+print(f\"  imported={d.get('rules_count',0)} success={d.get('success',False)} errors={len(d.get('errors',[]))}\")
+for e in d.get('errors', [])[:5]:
+    print(f\"  ! {e.get('rule_id','?')}: {e.get('error',{}).get('message','')[:160]}\")
+" 2>/dev/null || cat /tmp/rule-import.out)
+      log "${SUMMARY}"
+    else
+      log "WARNING: rule import returned HTTP ${HTTP} — skipping"
+      head -c 400 /tmp/rule-import.out 2>/dev/null || true
+    fi
+  done
+else
+  log "No detection rule NDJSON files found under ${RULES_DIR} — skipping."
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────

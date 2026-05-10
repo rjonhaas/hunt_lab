@@ -6,9 +6,16 @@ VMs (`win-dc`, `win-server`, `win11-victim`) form an Active Directory domain
 preloaded with Sysmon, Elastic Agent, MITRE Caldera sandcat, and Atomic Red
 Team — ready to hunt as soon as `vagrant up` finishes.
 
-The lab also ships with a fully wired-up recreation of The DFIR Report's
-**June 2025 RansomHub case** — adversary, abilities, decoy data, and S3 exfil
-target are all seeded automatically.
+The lab also ships with two fully wired-up Caldera scenarios that exercise
+complementary detection surfaces:
+
+- **DFIR-RansomHub-2025-Lab** — recreation of The DFIR Report's June 2025
+  RansomHub case (endpoint-heavy: process / file / DNS / S3 exfil).
+- **Identity-Chain-2025-Lab** — Kerberoasting → DCSync → Golden Ticket →
+  Pass-the-Ticket (identity-side: 4769, 4662, Mimikatz patterns).
+
+Both adversaries, all abilities, decoy data, and the S3 exfil target are
+seeded automatically.
 
 ---
 
@@ -58,8 +65,8 @@ target are all seeded automatically.
 | `fleet-server`   | 8220      | Elastic Agent management                      |
 | `caldera`        | 8888      | MITRE Caldera 5.x (C2 / adversary emulation)  |
 | `localstack`     | 4566      | Simulated AWS (S3, IAM, CloudTrail, Lambda…)  |
-| `filebeat`       | —         | Ships CloudTrail-style logs to Elasticsearch  |
-| `cloudtrail-gen` | —         | Emits synthetic AWS activity every 60 s       |
+| `filebeat`       | —         | Ships CloudTrail JSON to Elasticsearch        |
+| `cloudtrail-gen` | —         | Tails LocalStack request logs and emits a CloudTrail event per real API call |
 | `bootstrap`      | —         | One-shot init (writes Fleet token, seeds Caldera abilities, creates S3 bucket) |
 
 ---
@@ -160,7 +167,9 @@ DC safe-mode (DSRM) password: `Vagrant123!`
 
 ---
 
-## Built-in scenario: DFIR-RansomHub-2025-Lab
+## Built-in scenarios
+
+### 1. DFIR-RansomHub-2025-Lab — endpoint chain
 
 A faithful recreation of The DFIR Report's
 [*"Hide Your RDP: Password Spray Leads to RansomHub Deployment"*](https://thedfirreport.com/reports/)
@@ -168,19 +177,41 @@ A faithful recreation of The DFIR Report's
 recon → credential theft → discovery → defense evasion → exfil-to-S3 →
 shadow-copy delete → benign "encryptor" → log clearing.
 
-Everything is seeded automatically:
-
-- **Bootstrap container** creates `s3://ransomhub-exfil-lab` in LocalStack and
-  pushes all abilities + the adversary `DFIR-RansomHub-2025-Lab` into Caldera.
-- **`win-server` provisioner** stages 105 decoy files under
-  `C:\Shares\Finance\` and publishes the SMB share.
-- **Each Windows VM** registers a sandcat agent in Caldera group `red`.
-
-To run it: log into Caldera, **Operations → New Operation → Adversary
+Run it: Caldera → **Operations → New Operation → Adversary
 `DFIR-RansomHub-2025-Lab`, Group `red`, Start**.
 
-Full details, dwell-time tuning, and a hunt-this-in-Kibana cheat sheet live
-in [`scripts/scenarios/ransomhub/README.md`](scripts/scenarios/ransomhub/README.md).
+- Scenario details, dwell-time tuning, hunt cheat-sheet:
+  [`scripts/scenarios/ransomhub/README.md`](scripts/scenarios/ransomhub/README.md).
+- ATT&CK Navigator layer:
+  [`attack_navigator/ransomhub_layer.json`](attack_navigator/ransomhub_layer.json).
+
+### 2. Identity-Chain-2025-Lab — Kerberos chain
+
+Six attack abilities + two dwell abilities covering Kerberoasting → DCSync →
+Golden Ticket → Pass-the-Ticket. Stresses Kerberos telemetry (4769 RC4 TGS,
+4662 directory replication, Mimikatz command-line patterns) instead of the
+RansomHub chain's process/file telemetry — useful for showing different
+detection primitives off the same lab.
+
+Run it: Caldera → **Operations → New Operation → Adversary
+`Identity-Chain-2025-Lab`, Group `red`, Start** (manually pick agents per
+ability — DCSync targets `win-dc`, the rest run on `win-server`; the scenario
+README explains why).
+
+- Scenario details, targeting matrix, hunt cheat-sheet:
+  [`scripts/scenarios/identity_chain/README.md`](scripts/scenarios/identity_chain/README.md).
+- ATT&CK Navigator layer:
+  [`attack_navigator/identity_chain_layer.json`](attack_navigator/identity_chain_layer.json).
+
+### What's seeded automatically
+
+- **Bootstrap container** creates `s3://ransomhub-exfil-lab` in LocalStack
+  and pushes both adversaries (RansomHub + Identity Chain) into Caldera.
+- **`win-server` provisioner** stages 105 decoy files under `C:\Shares\Finance\`
+  and publishes the SMB share.
+- **`win-dc` provisioner** registers the kerberoastable SPN
+  `HTTP/finance.lab.local` on `svc-deploy`.
+- **Each Windows VM** registers a sandcat agent in Caldera group `red`.
 
 ---
 
@@ -196,6 +227,10 @@ in [`scripts/scenarios/ransomhub/README.md`](scripts/scenarios/ransomhub/README.
    open the prebuilt **HL - Threat Hunt Report Template** dashboard
    (auto-imported on Windows host runs; manual import steps in
    [`kibana/README.md`](kibana/README.md)).
+4. **Watch for alerts** — 21 Elastic Security detection rules (13 RansomHub +
+   8 Identity-Chain) are auto-imported by the bootstrap container. Find them
+   in **Security → Rules**, and matching alerts in **Security → Alerts**.
+   NDJSON sources: [`kibana/detection_rules/`](kibana/detection_rules/).
 
 ### Useful Kibana indices
 
@@ -274,14 +309,17 @@ hunt_lab/
     ├── deploy_caldera_agent.ps1              # Standalone sandcat (re)deploy
     ├── install_atomic_red_team.ps1           # Invoke-AtomicRedTeam + atomics library
     ├── caldera_ransomhub_setup.py            # Pushes RansomHub abilities/adversary
+    ├── caldera_identity_setup.py             # Pushes Identity-Chain abilities/adversary
     └── scenarios/
-        └── ransomhub/                        # DFIR-RansomHub-2025-Lab assets
-            ├── README.md
-            ├── seed_decoy_data.ps1           # Stages C:\Shares\Finance\
-            ├── seed_localstack_bucket.sh     # Creates s3://ransomhub-exfil-lab
-            ├── fake_amd64.ps1                # Benign rename-and-note simulator
-            ├── nocmd.vbs / rcl.bat / include.txt  # Exfil wrapper artifacts
-            └── ransom_note.txt
+        ├── ransomhub/                        # DFIR-RansomHub-2025-Lab assets
+        │   ├── README.md
+        │   ├── seed_decoy_data.ps1           # Stages C:\Shares\Finance\
+        │   ├── seed_localstack_bucket.sh     # Creates s3://ransomhub-exfil-lab
+        │   ├── fake_amd64.ps1                # Benign rename-and-note simulator
+        │   ├── nocmd.vbs / rcl.bat / include.txt  # Exfil wrapper artifacts
+        │   └── ransom_note.txt
+        └── identity_chain/                   # Identity-Chain-2025-Lab assets
+            └── README.md                     # Targeting matrix + hunt cheat-sheet
 ```
 
 **Files generated at runtime (git-ignored):**

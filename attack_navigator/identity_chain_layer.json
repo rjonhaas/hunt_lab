@@ -1,0 +1,97 @@
+{
+  "name": "Hunt Lab — Identity-Chain-2025-Lab Coverage",
+  "versions": {
+    "attack": "14",
+    "navigator": "4.9.1",
+    "layer": "4.5"
+  },
+  "domain": "enterprise-attack",
+  "description": "ATT&CK techniques exercised by the Hunt Lab Identity-Chain-2025-Lab Caldera adversary. Kerberoasting -> DCSync -> Golden Ticket -> Pass-the-Ticket. Counterpart to the endpoint-heavy ransomhub_layer.json. Drop into https://mitre-attack.github.io/attack-navigator/.",
+  "filters": {
+    "platforms": ["Windows"]
+  },
+  "sorting": 0,
+  "layout": {
+    "layout": "side",
+    "aggregateFunction": "average",
+    "showID": true,
+    "showName": true,
+    "showAggregateScores": false,
+    "countUnscored": false
+  },
+  "hideDisabled": false,
+  "techniques": [
+    {
+      "techniqueID": "T1078.002",
+      "score": 100,
+      "comment": "id-00-prep-spn — setspn -A HTTP/finance.lab.local on svc-deploy",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "id-00-prep-spn"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1558.003",
+      "score": 100,
+      "comment": "id-01-kerberoast — Atomic T1558.003 Test 2 (PowerShell KerberosRequestorSecurityToken)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "id-01-kerberoast"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1003.006",
+      "score": 100,
+      "comment": "id-02-dcsync — Atomic T1003.006 Test 1 (mimikatz lsadump::dcsync /user:krbtgt)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "id-02-dcsync"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1558.001",
+      "score": 100,
+      "comment": "id-03-golden-ticket — Atomic T1558.001 Test 1 (mimikatz kerberos::golden)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "id-03-golden-ticket"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1550.003",
+      "score": 100,
+      "comment": "id-04-pass-the-ticket — Atomic T1550.003 Test 1 (mimikatz kerberos::ptt) + DC C$ access proof",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "id-04-pass-the-ticket"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1070",
+      "score": 100,
+      "comment": "id-05-cleanup — klist purge to clean lab state",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "id-05-cleanup"}]
+    },
+    {
+      "techniqueID": "T1029",
+      "score": 50,
+      "comment": "id-dwell-1/2 — two dwell abilities model attacker idle time (offline crack, target selection)",
+      "enabled": true,
+      "color": "#ffd966"
+    }
+  ],
+  "gradient": {
+    "colors": ["#ffffff", "#6e9eff"],
+    "minValue": 0,
+    "maxValue": 100
+  },
+  "legendItems": [
+    {"label": "Exercised by Identity Chain", "color": "#6e9eff"},
+    {"label": "Dwell modelling only", "color": "#ffd966"}
+  ],
+  "metadata": [
+    {"name": "scenario", "value": "Identity-Chain-2025-Lab"},
+    {"name": "abilities", "value": "6 attack + 2 dwell"},
+    {"name": "focus", "value": "Kerberos identity-side telemetry (4769, 4662, mimikatz command lines)"}
+  ],
+  "showTacticRowBackground": false,
+  "tacticRowBackground": "#dddddd",
+  "selectTechniquesAcrossTactics": true,
+  "selectSubtechniquesWithParent": false
+}

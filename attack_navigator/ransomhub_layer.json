@@ -1,0 +1,135 @@
+{
+  "name": "Hunt Lab — DFIR-RansomHub-2025-Lab Coverage",
+  "versions": {
+    "attack": "14",
+    "navigator": "4.9.1",
+    "layer": "4.5"
+  },
+  "domain": "enterprise-attack",
+  "description": "ATT&CK techniques exercised by the Hunt Lab recreation of The DFIR Report's June 2025 RansomHub case (Hide Your RDP: Password Spray Leads to RansomHub Deployment). Each highlighted technique maps to one or more abilities in the DFIR-RansomHub-2025-Lab Caldera adversary. Drop this layer into https://mitre-attack.github.io/attack-navigator/.",
+  "filters": {
+    "platforms": ["Windows"]
+  },
+  "sorting": 0,
+  "layout": {
+    "layout": "side",
+    "aggregateFunction": "average",
+    "showID": true,
+    "showName": true,
+    "showAggregateScores": false,
+    "countUnscored": false
+  },
+  "hideDisabled": false,
+  "techniques": [
+    {
+      "techniqueID": "T1087.002",
+      "score": 100,
+      "comment": "rh-01-recon-domain — net group 'Domain Admins' /domain, nltest, whoami /all",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-01-recon-domain"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1046",
+      "score": 100,
+      "comment": "rh-02-recon-network — PowerShell sweep of 192.168.56.0/24 (substitute for Advanced IP Scanner)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-02-recon-network"}]
+    },
+    {
+      "techniqueID": "T1003.001",
+      "score": 100,
+      "comment": "rh-03-creds-lsass — Atomic Red Team T1003.001 Test 1 (comsvcs.dll MiniDump)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-03-creds-lsass"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1003.002",
+      "score": 100,
+      "comment": "rh-04-creds-sam — Atomic Red Team T1003.002 Test 1 (reg save SAM/SECURITY/SYSTEM)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-04-creds-sam"}]
+    },
+    {
+      "techniqueID": "T1135",
+      "score": 100,
+      "comment": "rh-05-disc-fileshare — net view + recursive walk of \\\\win-server\\Finance",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-05-disc-fileshare"}]
+    },
+    {
+      "techniqueID": "T1222.001",
+      "score": 100,
+      "comment": "rh-06-evasion-symlink — fsutil behavior set SymlinkEvaluation R2L:1 R2R:1",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-06-evasion-symlink"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1105",
+      "score": 100,
+      "comment": "rh-07-tool-rclone-dl + rh-08-tool-stage-artifacts — rclone.exe pulled at runtime; nocmd.vbs / rcl.bat / include.txt staged",
+      "enabled": true,
+      "metadata": [
+        {"name": "ability_id", "value": "rh-07-tool-rclone-dl"},
+        {"name": "ability_id", "value": "rh-08-tool-stage-artifacts"}
+      ]
+    },
+    {
+      "techniqueID": "T1567.002",
+      "score": 100,
+      "comment": "rh-09-exfil-rclone — wscript → cmd → rclone copy to s3://ransomhub-exfil-lab on LocalStack",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-09-exfil-rclone"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1490",
+      "score": 100,
+      "comment": "rh-10-impact-vss — Atomic Red Team T1490 Test 1 (vssadmin Delete Shadows /all /quiet)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-10-impact-vss"}]
+    },
+    {
+      "techniqueID": "T1486",
+      "score": 100,
+      "comment": "rh-11-impact-encrypt — fake_amd64.ps1 (benign rename + ransom-note drop in C:\\Shares\\Finance)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-11-impact-encrypt"}]
+    },
+    {
+      "techniqueID": "T1070.001",
+      "score": 100,
+      "comment": "rh-12-evasion-clearlogs — Atomic Red Team T1070.001 Test 1 (wevtutil cl Application/System/Security)",
+      "enabled": true,
+      "metadata": [{"name": "ability_id", "value": "rh-12-evasion-clearlogs"}],
+      "showSubtechniques": true
+    },
+    {
+      "techniqueID": "T1029",
+      "score": 50,
+      "comment": "rh-dwell-1/2/3 — three dwell abilities model attacker idle time between phases (foothold, post-creds, pre-impact)",
+      "enabled": true,
+      "color": "#ffd966"
+    }
+  ],
+  "gradient": {
+    "colors": ["#ffffff", "#ff6e6e"],
+    "minValue": 0,
+    "maxValue": 100
+  },
+  "legendItems": [
+    {"label": "Exercised by RansomHub chain", "color": "#ff6e6e"},
+    {"label": "Dwell / scheduled-transfer modelling only", "color": "#ffd966"}
+  ],
+  "metadata": [
+    {"name": "source", "value": "https://thedfirreport.com/reports/"},
+    {"name": "case", "value": "Hide Your RDP: Password Spray Leads to RansomHub Deployment (2025-06)"},
+    {"name": "abilities", "value": "12 attack + 3 dwell"}
+  ],
+  "showTacticRowBackground": false,
+  "tacticRowBackground": "#dddddd",
+  "selectTechniquesAcrossTactics": true,
+  "selectSubtechniquesWithParent": false
+}

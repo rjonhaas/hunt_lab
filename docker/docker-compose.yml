@@ -196,6 +196,7 @@ services:
       - DEFAULT_REGION=us-east-1
       - EAGER_SERVICE_LOADING=1
       - DEBUG=0
+      - LS_LOG=info  # cloudtrail-gen tailer parses 'AWS service.Op => status' lines from this stream
       - DATA_DIR=/var/lib/localstack/data
       - DOCKER_HOST=unix:///var/run/docker.sock
     ports:
@@ -214,9 +215,16 @@ services:
       retries: 10
       start_period: 30s
 
-  # ── CloudTrail activity generator ──────────────────────────────────────────
-  # A minimal Python/awslocal container that seeds baseline resources on first
-  # run, then emits CloudTrail-formatted events every 60 seconds for Filebeat.
+  # ── CloudTrail tailer ──────────────────────────────────────────────────────
+  # Seeds baseline AWS resources once (S3 buckets, IAM users, sample objects),
+  # then tails LocalStack's stdout via the Docker engine API and writes a
+  # CloudTrail-formatted JSON event per real API call into ./cloudtrail/.
+  # Filebeat picks the events up from that shared volume.
+  #
+  # Net effect: any AWS API hit against LocalStack — by the seed step, by
+  # Caldera abilities (rclone S3 exfil, future IAM scenarios), or by anything
+  # else the user runs — produces a real CloudTrail event in
+  # logs-aws.cloudtrail-*. No more synthetic noise.
   cloudtrail-gen:
     image: python:3.11-slim
     container_name: cloudtrail-gen
@@ -229,19 +237,25 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
       - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - LOCALSTACK_CONTAINER=localstack
       - CLOUDTRAIL_LOG_DIR=/cloudtrail
+      - DOCKER_SOCK=/var/run/docker.sock
     volumes:
       - ./cloudtrail:/cloudtrail
-      - ./bootstrap/generate_cloudtrail_activity.sh:/generate_cloudtrail_activity.sh:ro
+      - ./bootstrap/generate_cloudtrail_activity.sh:/seed.sh:ro
+      - ./bootstrap/cloudtrail_tailer.py:/tailer.py:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        pip install -q awscli-local awslocal 2>/dev/null
-        # Seed once, then loop every 60s
-        while true; do
-          bash /generate_cloudtrail_activity.sh
-          sleep 60
-        done
+        set -e
+        command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq curl; }
+        pip install --no-cache-dir -q awscli-local awscli docker
+        # Tailer attaches first so it catches the seed's API calls; seed
+        # runs after a short delay in the background. Tailer stays in
+        # the foreground as the container's main process.
+        ( sleep 5 && bash /seed.sh ) &
+        exec python3 -u /tailer.py
     networks:
       - hunt_net
 
