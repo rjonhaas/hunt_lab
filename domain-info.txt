@@ -1,5 +1,0 @@
-﻿DOMAIN=lab.local
-NETBIOS=LAB
-DC_IP=192.168.56.50
-JOIN_USER=vagrant
-JOIN_PASS=vagrant

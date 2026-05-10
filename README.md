@@ -1,6 +1,14 @@
-# Threat Hunting Lab — Elastic SIEM + MITRE Caldera + Local Cloud + Windows Domain
+# Hunt Lab — Elastic SIEM + MITRE Caldera + Active Directory + LocalStack
 
-A self-contained VMware/Vagrant threat hunting lab that provisions six VMs: an Elastic SIEM stack, a MITRE Caldera C2 server, a LocalStack-based local cloud simulator, a Windows 11 victim endpoint, an Active Directory domain controller (`lab.local`), and a domain member server — all with Sysmon and Elastic Agent pre-enrolled in Fleet. On Windows, the bootstrap also imports a reusable Kibana threat hunting dashboard template and loads the Hunt Lab Caldera content automatically.
+A self-contained threat hunting lab. One Linux VM runs the SIEM stack, C2
+framework, and a simulated AWS environment as Docker containers; three Windows
+VMs (`win-dc`, `win-server`, `win11-victim`) form an Active Directory domain
+preloaded with Sysmon, Elastic Agent, MITRE Caldera sandcat, and Atomic Red
+Team — ready to hunt as soon as `vagrant up` finishes.
+
+The lab also ships with a fully wired-up recreation of The DFIR Report's
+**June 2025 RansomHub case** — adversary, abilities, decoy data, and S3 exfil
+target are all seeded automatically.
 
 ---
 
@@ -8,247 +16,89 @@ A self-contained VMware/Vagrant threat hunting lab that provisions six VMs: an E
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    Host-Only Network: 192.168.56.0/24                   │
+│                  Host-Only Network: 192.168.56.0/24                     │
 │                                                                         │
-│  ┌──────────────────┐  ┌─────────────────┐  ┌──────────────────────┐   │
-│  │  elastic-siem    │  │    win-dc        │  │      win-server      │   │
-│  │  192.168.56.10   │◄─│  192.168.56.50   │  │    192.168.56.51     │   │
-│  │                  │  │                  │  │                      │   │
-│  │  Elasticsearch   │  │  Windows Server  │  │  Windows Server 2022 │   │
-│  │  Kibana          │  │  2022            │  │  Domain member       │   │
-│  │  Fleet Server    │  │  AD DS / DNS     │  │  Sysmon              │   │
-│  │                  │  │  lab.local DC    │  │  Elastic Agent       │   │
-│  └──────────────────┘  │  Sysmon          │  └──────────────────────┘   │
-│                        │  Elastic Agent   │                              │
-│  ┌──────────────────┐  └─────────────────┘  ┌──────────────────────┐   │
-│  │  win11-victim    │                        │      caldera         │   │
-│  │  192.168.56.20   │──────────────────────► │    192.168.56.30     │   │
-│  │                  │                        │                      │   │
-│  │  Windows 11      │                        │  MITRE Caldera 5.x   │   │
-│  │  Sysmon          │                        │  (Docker)            │   │
-│  │  Elastic Agent   │                        │                      │   │
-│  │  (opt: lab.local)│                        └──────────────────────┘   │
-│  └──────────────────┘                                                   │
-│                           ┌──────────────────┐                          │
-│                           │    cloud-sim     │                          │
-│                           │  192.168.56.40   │                          │
-│                           │  LocalStack      │                          │
-│                           │  CloudTrail logs │                          │
-│                           │  Filebeat        │                          │
-│                           └──────────────────┘                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │  docker-host          192.168.56.10        Ubuntu 22.04          │   │
+│  │  ─────────────────────────────────────────────────────────────   │   │
+│  │  Elasticsearch  Kibana  Fleet Server  Caldera  LocalStack        │   │
+│  │  Filebeat       CloudTrail-gen        bootstrap (one-shot)       │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│         ▲                  ▲                  ▲                         │
+│         │ Fleet            │ sandcat C2       │ S3 exfil target         │
+│         │                  │                  │                         │
+│  ┌──────┴───────┐  ┌───────┴──────┐  ┌────────┴─────────┐              │
+│  │  win-dc      │  │  win-server  │  │  win11-victim    │              │
+│  │ 192.168.56.50│  │192.168.56.51 │  │  192.168.56.20   │              │
+│  │  WinSrv 2022 │  │  WinSrv 2022 │  │  Windows 11      │              │
+│  │  AD DS / DNS │  │  Domain mbr  │  │  Domain member   │              │
+│  │  lab.local   │  │  Finance SMB │  │                  │              │
+│  └──────────────┘  └──────────────┘  └──────────────────┘              │
+│                                                                         │
+│  All Windows VMs ship with: Sysmon (SwiftOnSecurity) + Elastic Agent    │
+│  + Caldera sandcat (group: red) + Atomic Red Team                       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### VM Inventory
+### VM inventory
 
-| VM Name        | IP             | OS                  | RAM  | CPUs | Role                                      |
-|----------------|----------------|---------------------|------|------|-------------------------------------------|
-| `elastic-siem` | 192.168.56.10  | Ubuntu 22.04        | 8 GB | 4    | Elasticsearch + Kibana + Fleet            |
-| `win11-victim` | 192.168.56.20  | Windows 11          | 4 GB | 2    | Victim endpoint (optionally domain-joined)|
-| `caldera`      | 192.168.56.30  | Ubuntu 22.04        | 4 GB | 2    | MITRE Caldera C2 + sandcat agent          |
-| `cloud-sim`    | 192.168.56.40  | Ubuntu 22.04        | 4 GB | 2    | LocalStack + CloudTrail log shipper       |
-| `win-dc`       | 192.168.56.50  | Windows Server 2022 | 4 GB | 2    | Active Directory DC + DNS (`lab.local`)   |
-| `win-server`   | 192.168.56.51  | Windows Server 2022 | 2 GB | 2    | Domain member server                      |
+| VM            | IP             | OS                  | RAM   | CPUs | Role                                     |
+|---------------|----------------|---------------------|-------|------|------------------------------------------|
+| `docker-host` | 192.168.56.10  | Ubuntu 22.04        | 12 GB | 4    | SIEM + C2 + cloud-sim Docker stack       |
+| `win11-victim`| 192.168.56.20  | Windows 11          | 4 GB  | 2    | Victim workstation (domain member)       |
+| `win-dc`      | 192.168.56.50  | Windows Server 2022 | 4 GB  | 2    | Active Directory DC + DNS (`lab.local`)  |
+| `win-server`  | 192.168.56.51  | Windows Server 2022 | 2 GB  | 2    | Domain member; hosts the SMB Finance share |
+
+### Container inventory (running on `docker-host`)
+
+| Container        | Port      | Role                                          |
+|------------------|-----------|-----------------------------------------------|
+| `elasticsearch`  | 9200      | Log/event store                               |
+| `kibana`         | 5601      | SIEM UI                                       |
+| `fleet-server`   | 8220      | Elastic Agent management                      |
+| `caldera`        | 8888      | MITRE Caldera 5.x (C2 / adversary emulation)  |
+| `localstack`     | 4566      | Simulated AWS (S3, IAM, CloudTrail, Lambda…)  |
+| `filebeat`       | —         | Ships CloudTrail-style logs to Elasticsearch  |
+| `cloudtrail-gen` | —         | Emits synthetic AWS activity every 60 s       |
+| `bootstrap`      | —         | One-shot init (writes Fleet token, seeds Caldera abilities, creates S3 bucket) |
 
 ---
 
-## Host Requirements
+## Host requirements
 
-| Resource | Minimum | Recommended |
-|----------|---------|-------------|
-| RAM      | 30 GB free | 36 GB free |
-| CPU      | 8 cores | 12+ cores |
-| Disk     | 200 GB free | 300 GB free |
+| Resource | Minimum   | Recommended |
+|----------|-----------|-------------|
+| RAM      | 24 GB     | 32 GB       |
+| CPU      | 6 cores   | 8+ cores    |
+| Disk     | 150 GB    | 250 GB      |
 | OS       | Windows 10/11 or Linux | — |
 
-> **Note:** The two Windows Server 2022 VMs add ~6 GB RAM to the previous 20 GB baseline. If you don't need the Active Directory domain, you can bring up only the original four VMs: `vagrant up elastic-siem caldera cloud-sim win11-victim`.
+**Required software (install manually before running setup):**
 
-**Required software (install manually before running the setup script):**
+| Software                | Version | Where                                                                             |
+|-------------------------|---------|-----------------------------------------------------------------------------------|
+| VMware Workstation Pro  | 17+     | [vmware.com](https://www.vmware.com/products/workstation-pro.html) (free for personal use) |
+| Vagrant                 | 2.3+    | [developer.hashicorp.com/vagrant/install](https://developer.hashicorp.com/vagrant/install) |
 
-| Software | Version | Download |
-|----------|---------|----------|
-| VMware Workstation Pro | 17+ | [vmware.com](https://www.vmware.com/products/workstation-pro.html) — free for personal use |
-| Vagrant | 2.3+ | [developer.hashicorp.com/vagrant/install](https://developer.hashicorp.com/vagrant/install) |
-
-The setup script installs the `vagrant-vmware-utility` service and the `vagrant-vmware-desktop` Vagrant plugin automatically.
-
----
-
-## Project Structure
-
-```
-hunt_lab/
-├── kibana/
-│   ├── README.md                       # Hunt dashboard/template details and manual import steps
-│   ├── create_all_objects.py           # Create saved objects in Kibana via API
-│   ├── generate_template.py            # Regenerate the dashboard/template NDJSON
-│   └── hunt_report_template.ndjson     # Importable Kibana saved objects export
-├── setup.sh                          # Linux quick-start (run this first)
-├── setup.ps1                         # Windows quick-start (run this first)
-├── Vagrantfile                       # Defines all six lab VMs
-└── scripts/
-    ├── install_elastic.sh            # Guest: Elasticsearch 8.x + Kibana + Fleet Server
-    ├── install_caldera.sh            # Guest: MITRE Caldera 5.x via Docker Compose
-    ├── install_cloud_sim.sh          # Guest: LocalStack + CloudTrail activity + Filebeat
-    ├── install_win_tools.ps1         # Guest: Sysmon + Elastic Agent enrollment + sandcat
-    ├── deploy_caldera_agent.ps1      # Standalone: re-deploy sandcat without full reprovision
-    ├── caldera_setup.py              # Loads cloud-focused abilities/adversary into Caldera
-    ├── setup_dc.ps1                  # Guest (win-dc stage 1): AD DS role install + DC promotion
-    ├── setup_dc_post_reboot.ps1      # Guest (win-dc stage 2): OUs, users, Sysmon, Elastic Agent
-    ├── setup_win_server.ps1          # Guest (win-server stage 1): network config + domain join
-    ├── setup_win_server_tools.ps1    # Guest (win-server stage 2): Sysmon + Elastic Agent
-    ├── join_domain.ps1               # Guest (win11-victim optional): domain-join the victim
-    └── scenarios/                    # Cloud attack scenarios and NDJSON samples
-```
-
-**Generated at runtime (git-ignored):**
-- `elastic-credentials.txt` — `elastic` superuser password, written by `install_elastic.sh`
-- `fleet-enrollment-token.txt` — Fleet enrollment token consumed by all Windows VMs
-- `domain-info.txt` — Domain name, NetBIOS name, DC IP, and join credentials written by `setup_dc_post_reboot.ps1`; consumed by `setup_win_server.ps1` and `join_domain.ps1`
-- `localstack-auth-token.txt` — Optional LocalStack token on host; enables Pro features for `cloud-sim`
-
-## Optional: Enable LocalStack Pro Features
-
-If you have a LocalStack account/token, create this file in the repo root before provisioning `cloud-sim`:
-
-```text
-localstack-auth-token.txt
-```
-
-Put your token as the only line in that file.
-
-When present, `scripts/install_cloud_sim.sh` automatically:
-
-1. Uses `localstack/localstack-pro:3.4`
-2. Passes `LOCALSTACK_AUTH_TOKEN` into the LocalStack container
-
-If the file is missing, provisioning falls back to Community mode automatically.
+The setup script installs the `vagrant-vmware-utility` service and the
+`vagrant-vmware-desktop` plugin automatically.
 
 ---
 
-## Alternative: Docker Single-Server Deployment
+## Quick start
 
-> **Branch:** `feat/docker-single-server`
->
-> This branch replaces the three Ubuntu VMs (`elastic-siem`, `caldera`, `cloud-sim`) with a single Docker Compose stack on one Ubuntu host. The Windows 11 victim (`win11-victim`) still runs as a Vagrant VM pointing at the host IP for Fleet enrollment.
-
-### Requirements
-
-| Resource | Minimum | Recommended |
-|---|---|---|
-| RAM | 16 GB | 24 GB |
-| CPU | 4 cores | 8+ cores |
-| OS | Ubuntu 22.04+ | — |
-| Docker Engine | 24+ | — |
-
-### Quick Start
-
-```bash
-# 1. Install Docker Engine (if not already present)
-curl -fsSL https://get.docker.com | sh
-
-# 2. Clone and enter the repo on this branch
-git clone -b feat/docker-single-server <repo-url> hunt_lab
-cd hunt_lab/docker
-
-# 3. Configure environment
-cp .env.example .env
-nano .env   # set HOST_IP, ELASTIC_PASSWORD, KIBANA_SYSTEM_PASSWORD
-
-# 4. Run setup
-chmod +x setup.sh && bash setup.sh
-```
-
-### Services and ports
-
-| Service | Container | Port |
-|---|---|---|
-| Elasticsearch | `elasticsearch` | 9200 |
-| Kibana | `kibana` | 5601 |
-| Fleet Server | `fleet-server` | 8220 |
-| MITRE Caldera | `caldera` | 8888, 7010-7012 |
-| LocalStack | `localstack` | 4566 |
-| Filebeat | `filebeat` | — |
-| CloudTrail gen | `cloudtrail-gen` | — |
-
-### Docker project layout
-
-```
-docker/
-├── docker-compose.yml
-├── setup.sh                            # Host setup script
-├── .env.example                        # Copy to .env and fill in values
-├── fleet-enrollment-token.txt          # Written by bootstrap (git-ignored)
-├── cloudtrail/                         # CloudTrail event JSON files (Filebeat input)
-├── bootstrap/
-│   ├── bootstrap.sh                    # One-shot Elastic + Fleet setup container
-│   └── generate_cloudtrail_activity.sh # Emits CloudTrail events every 60s
-└── config/
-    ├── caldera/local.yml               # Caldera server config (HOST_IP injected at boot)
-    └── filebeat/filebeat.yml           # Ships cloudtrail/ → Elasticsearch
-```
-
-### Key differences from the Vagrant layout
-
-| | Vagrant (main) | Docker (this branch) |
-|---|---|---|
-| Elastic stack | Dedicated VM (192.168.56.10) | Container on host |
-| Caldera | Dedicated VM (192.168.56.30) | Container on host |
-| LocalStack | Dedicated VM (192.168.56.40) | Container on host |
-| Windows victim | Vagrant VM | Vagrant VM (unchanged) |
-| Startup time | 25–40 min | 5–10 min |
-| Resource use | 20+ GB RAM across VMs | 10–12 GB total |
-| Network isolation | Real host-only NICs | Docker bridge network |
-| Reprovisioning | `vagrant provision <vm>` | `docker compose restart <svc>` |
-
-### Useful commands
-
-```bash
-# View all service logs
-docker compose logs -f
-
-# Re-run bootstrap (e.g. after wiping volumes)
-docker compose run --rm bootstrap
-
-# Restart a single service
-docker compose restart caldera
-
-# Stop without deleting volumes
-docker compose down
-
-# Wipe everything including data volumes
-docker compose down -v
-```
-
----
-
-## Quick Start — Linux
+### Linux / macOS
 
 ```bash
 git clone <repo-url> hunt_lab
 cd hunt_lab
-
 chmod +x setup.sh
-bash setup.sh
+./setup.sh
 ```
 
-`setup.sh` runs everything in the correct order:
+### Windows
 
-1. Verifies VMware Workstation and Vagrant are installed
-2. Downloads and installs `vagrant-vmware-utility` (`.deb`) and enables the systemd service
-3. Installs the `vagrant-vmware-desktop` Vagrant plugin
-4. Downloads the Windows 11 and Windows Server 2022 Vagrant boxes (~8–12 GB each on first run)
-5. Provisions in order: `elastic-siem` → `caldera` → `cloud-sim` → `win-dc` → `win-server` → `win11-victim`
-
-**First-run time: 45–70 minutes** (mostly network downloads; Windows Server VMs each include a mid-provision reboot).
-
-Linux note: `setup.sh` provisions the VMs only. The automatic Kibana template import and Caldera content load happen in the Windows bootstrap path.
-
----
-
-## Quick Start — Windows
-
-Open an **elevated PowerShell prompt** (Run as Administrator), then:
+Open an **elevated PowerShell** prompt:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -256,279 +106,252 @@ cd C:\path\to\hunt_lab
 .\setup.ps1
 ```
 
-`setup.ps1` does the same steps as `setup.sh` but uses Windows-native tooling:
+Both scripts do the same thing in the same order:
 
-1. Verifies VMware Workstation and Vagrant are installed
-2. Downloads and installs `vagrant-vmware-utility` (`.msi`) silently
-3. Installs the `vagrant-vmware-desktop` Vagrant plugin
-4. Downloads the Windows 11 and Windows Server 2022 Vagrant boxes (~8–12 GB each on first run)
-5. Provisions in order: `elastic-siem` → imports the Kibana hunt template → `caldera` → loads Caldera abilities → `cloud-sim` → `win-dc` → `win-server` → `win11-victim`
+1. Verify VMware and Vagrant are installed; install the `vagrant-vmware-utility`
+   service and `vagrant-vmware-desktop` plugin if missing.
+2. Download Vagrant boxes (Ubuntu 22.04 ~700 MB, Windows 11 ~10 GB,
+   Windows Server 2022 ~8 GB).
+3. `vagrant up docker-host` — provisions Docker, runs `docker/setup.sh` inside
+   the VM, which writes `fleet-enrollment-token.txt` and `elastic-credentials.txt`
+   back to the repo root via the synced `/vagrant` folder.
+4. `vagrant up win-dc` — promotes the DC, creates OUs/users, writes
+   `domain-info.txt`, deploys agents.
+5. `vagrant up win-server` — joins domain, deploys agents, seeds the decoy
+   `Finance` SMB share.
+6. `vagrant up win11-victim` — joins domain, deploys agents.
 
-If a provisioning step fails, rerun just that machine with `vagrant up <vm-name> --provision` or `vagrant provision <vm-name>`.
+**First-run time: 30–45 minutes** (mostly box downloads and Windows reboots).
 
----
-
-## Accessing the Lab
-
-Once the setup script completes:
-
-| Service             | URL / Address                 | Credentials                               |
-|---------------------|-------------------------------|-------------------------------------------|
-| Kibana (SIEM)       | http://192.168.56.10:5601     | `elastic` / see `elastic-credentials.txt` |
-| Caldera (C2)        | http://192.168.56.30:8888     | `admin` / `admin`                         |
-| LocalStack API      | http://192.168.56.40:4566     | local test credentials managed in VM      |
-| Elasticsearch API   | http://192.168.56.10:9200     | same as Kibana                            |
-| Fleet Server        | http://192.168.56.10:8220     | internal — used by Elastic Agent          |
-| Domain Controller   | 192.168.56.50 (RDP)           | `LAB\vagrant` / `vagrant`                 |
-| Member Server       | 192.168.56.51 (RDP)           | `LAB\vagrant` / `vagrant`                 |
-
-**Active Directory — `lab.local`**
-
-| Account          | Type            | Group         | Password       |
-|------------------|-----------------|---------------|----------------|
-| `LAB\vagrant`    | Domain Admin    | Domain Admins | `vagrant`      |
-| `LAB\ajohnson`   | Domain Admin    | Domain Admins | `Lab!Password1`|
-| `LAB\jsmith`     | Standard user   | —             | `Lab!Password1`|
-| `LAB\bwilliams`  | Standard user   | —             | `Lab!Password1`|
-| `LAB\cdavis`     | Standard user   | —             | `Lab!Password1`|
-| `LAB\svc-backup` | Service account | —             | `Lab!Password1`|
-| `LAB\svc-deploy` | Service account | —             | `Lab!Password1`|
-
-DC safe mode (DSRM) password: `Vagrant123!`
-
-> **Note:** VMs created by Vagrant do not automatically appear in the VMware Workstation GUI.
-> To view them: **File → Open** and browse to `.vagrant/machines/<name>/vmware_desktop/<name>.vmx`.
+If a step fails, re-run only that VM: `vagrant up <name> --provision`.
 
 ---
 
-## Threat Hunting Workflow
+## Accessing the lab
 
-```
-Caldera (192.168.56.30)
-    │
-    │  executes ATT&CK TTPs via sandcat agent
-    ▼
-┌───────────────────────────────────────────────────────────────────┐
-│  Windows Domain: lab.local                                        │
-│                                                                   │
-│  win-dc (192.168.56.50)          win-server (192.168.56.51)       │
-│  Domain Controller + DNS         Member server                    │
-│  Sysmon + Elastic Agent          Sysmon + Elastic Agent           │
-│                                                                   │
-│  win11-victim (192.168.56.20)  ← optional domain member          │
-│  Windows 11 workstation                                           │
-│  sandcat agent → beacons to Caldera                               │
-│  Sysmon + Elastic Agent                                           │
-└───────────────────────────────────────────────────────────────────┘
-    │
-    │  Elastic Agent ships all host telemetry via Fleet
-    │
-    ├──────────────────────────────────────────────┐
-    │                                              │
-    ▼                                              ▼
-Local Cloud Sim (192.168.56.40)               Elastic SIEM (192.168.56.10)
-    │  LocalStack simulates AWS APIs              │  Fleet ingest: endpoint + AD + cloud
-    │  CloudTrail-style events written locally    │
-    │  Filebeat ships cloud activity              ▼
-    └──────────────────────────────────────────► Kibana → Dashboards / Discover / Security
-```
+| Service           | URL / Address              | Credentials                               |
+|-------------------|----------------------------|-------------------------------------------|
+| Kibana (SIEM)     | http://192.168.56.10:5601  | `elastic` / see `elastic-credentials.txt` |
+| Caldera (C2)      | http://192.168.56.10:8888  | `admin` / `admin`                         |
+| Fleet Server      | http://192.168.56.10:8220  | internal — used by Elastic Agent          |
+| LocalStack API    | http://192.168.56.10:4566  | local test credentials (`test` / `test`)  |
+| Elasticsearch API | http://192.168.56.10:9200  | same as Kibana                            |
+| `win-dc` (RDP)    | 192.168.56.50              | `LAB\vagrant` / `vagrant`                 |
+| `win-server` (RDP)| 192.168.56.51              | `LAB\vagrant` / `vagrant`                 |
+| `win11-victim` (RDP) | 192.168.56.20           | `LAB\vagrant` / `vagrant`                 |
 
-The sandcat agent is deployed automatically during provisioning on `win11-victim` and persists across reboots via a Windows Scheduled Task (`WindowsSecurityUpdate`). It beacons back to Caldera on port 8888 and joins the `red` agent group.
+### Active Directory (`lab.local`, NetBIOS `LAB`)
 
-To deploy sandcat on the domain VMs as well (for lateral movement / multi-host scenarios):
+| Account          | Type            | Group         | Password        |
+|------------------|-----------------|---------------|-----------------|
+| `LAB\vagrant`    | Domain Admin    | Domain Admins | `vagrant`       |
+| `LAB\ajohnson`   | Domain Admin    | Domain Admins | `Lab!Password1` |
+| `LAB\jsmith`     | Standard user   | —             | `Lab!Password1` |
+| `LAB\bwilliams`  | Standard user   | —             | `Lab!Password1` |
+| `LAB\cdavis`     | Standard user   | —             | `Lab!Password1` |
+| `LAB\svc-backup` | Service account | —             | `Lab!Password1` |
+| `LAB\svc-deploy` | Service account | —             | `Lab!Password1` |
 
-```bash
-vagrant provision win-dc     --provision-with deploy_caldera_agent
-vagrant provision win-server --provision-with deploy_caldera_agent
-```
+DC safe-mode (DSRM) password: `Vagrant123!`
 
-### Viewing data in Kibana
+> VMs created by Vagrant don't automatically appear in the VMware Workstation
+> GUI. To view one: **File → Open** → browse to
+> `.vagrant/machines/<name>/vmware_desktop/<name>.vmx`.
 
-In **Analytics → Discover**, select the **`logs-*`** data view from the top-left dropdown. Filter by host to isolate the victim:
+---
 
-```kql
-agent.hostname : "win11-victim"
-```
+## Built-in scenario: DFIR-RansomHub-2025-Lab
 
-Key indices written by the Windows agent:
+A faithful recreation of The DFIR Report's
+[*"Hide Your RDP: Password Spray Leads to RansomHub Deployment"*](https://thedfirreport.com/reports/)
+(2025-06). Twelve Caldera abilities + three dwell-time abilities chain through
+recon → credential theft → discovery → defense evasion → exfil-to-S3 →
+shadow-copy delete → benign "encryptor" → log clearing.
 
-| Index pattern | Content |
-|---|---|
-| `logs-windows.sysmon_operational-*` | Process, network, file, registry events |
-| `logs-windows.powershell_operational-*` | PS script block logging (4103/4104) |
-| `logs-windows.powershell-*` | PS classic pipeline events |
-| `logs-windows.windows_defender-*` | AV detections and exclusions |
-| `logs-system.security-*` | Windows Security Event Log |
-| `logs-system.application-*` | Windows Application Event Log |
+Everything is seeded automatically:
 
-Cloud-sim data is shipped into the same Elastic cluster via Filebeat. CloudTrail-style events can be hunted in `logs-*` alongside endpoint telemetry.
+- **Bootstrap container** creates `s3://ransomhub-exfil-lab` in LocalStack and
+  pushes all abilities + the adversary `DFIR-RansomHub-2025-Lab` into Caldera.
+- **`win-server` provisioner** stages 105 decoy files under
+  `C:\Shares\Finance\` and publishes the SMB share.
+- **Each Windows VM** registers a sandcat agent in Caldera group `red`.
 
-### Cloud activity queries
+To run it: log into Caldera, **Operations → New Operation → Adversary
+`DFIR-RansomHub-2025-Lab`, Group `red`, Start**.
 
-```kql
-# CloudTrail-style S3 access in the local cloud sim
-event.dataset : "aws.cloudtrail" and cloud.service.name : "s3.amazonaws.com"
+Full details, dwell-time tuning, and a hunt-this-in-Kibana cheat sheet live
+in [`scripts/scenarios/ransomhub/README.md`](scripts/scenarios/ransomhub/README.md).
 
-# ListObjects / GetObject style activity against seeded buckets
-event.dataset : "aws.cloudtrail" and cloud.service.name : "s3.amazonaws.com" and event.action : ("ListBuckets" or "ListObjectsV2" or "GetObject")
+---
 
-# IAM privilege-escalation style activity
-event.dataset : "aws.cloudtrail" and cloud.service.name : "iam.amazonaws.com" and event.action : ("AttachUserPolicy" or "PutUserPolicy" or "CreateAccessKey")
-```
+## Threat hunting workflow
 
-### Hunt dashboard template
+1. **Adversary emulation** — pick an operation in Caldera (the RansomHub
+   chain, or run individual Atomic Red Team techniques via
+   `Invoke-AtomicTest` on any Windows VM).
+2. **Telemetry collection** — Sysmon (SwiftOnSecurity config) + Windows event
+   channels are forwarded by Elastic Agent to Fleet → Elasticsearch.
+   CloudTrail-style events from LocalStack flow in via Filebeat.
+3. **Hunt in Kibana** — start in **Discover** with the `logs-*` data view, or
+   open the prebuilt **HL - Threat Hunt Report Template** dashboard
+   (auto-imported on Windows host runs; manual import steps in
+   [`kibana/README.md`](kibana/README.md)).
 
-On Windows hosts, `setup.ps1` waits for Kibana to come online and imports `kibana/hunt_report_template.ndjson` automatically. The import creates the `Hunt Lab Logs` data view and the `HL - Threat Hunt Report Template` dashboard.
+### Useful Kibana indices
 
-Recommended workflow:
-
-1. Open Kibana and go to **Dashboards**.
-2. Open **HL - Threat Hunt Report Template**.
-3. Duplicate it before editing.
-4. Use the duplicated dashboard as the working artifact for a specific investigation.
-5. Correlate endpoint and cloud activity in the same time window.
-
-Manual import steps and object details are documented in `kibana/README.md`.
+| Index pattern                            | Content                                        |
+|------------------------------------------|------------------------------------------------|
+| `logs-windows.sysmon_operational-*`      | Process / network / file / registry events     |
+| `logs-windows.powershell_operational-*`  | PS script-block logging (4103/4104)            |
+| `logs-system.security-*`                 | Windows Security event log                     |
+| `logs-system.system-*`                   | Windows System event log                       |
+| `logs-aws.cloudtrail-*` (via filebeat)   | LocalStack CloudTrail-style events             |
 
 ### Starter KQL queries
 
 ```kql
-# All Sysmon process creation events from the victim
+# All Sysmon process creation from the victim
 event.dataset : "windows.sysmon_operational" and event.code : "1"
+  and agent.hostname : "win11-victim"
 
-# Suspicious PowerShell invocation (Sysmon or PS operational)
-process.name : "powershell.exe" and process.command_line : (*-enc* or *bypass* or *EncodedCommand* or *IEX* or *DownloadString*)
+# LSASS memory access (credential dumping — Sysmon Event 10)
+event.dataset : "windows.sysmon_operational" and event.code : "10"
+  and winlog.event_data.TargetImage : *lsass.exe
 
-# Caldera sandcat beaconing
-destination.ip : "192.168.56.30" and destination.port : 8888
+# Suspicious PowerShell
+process.name : "powershell.exe"
+  and process.command_line : (*-enc* or *bypass* or *DownloadString* or *IEX*)
 
-# LSASS memory access (credential dumping — Sysmon event 10)
-event.dataset : "windows.sysmon_operational" and event.code : "10" and winlog.event_data.TargetImage : *lsass.exe
-
-# Network connections by non-browser processes (Sysmon event 3)
-event.dataset : "windows.sysmon_operational" and event.code : "3" and not process.name : ("chrome.exe" or "firefox.exe" or "msedge.exe")
-
-# Scheduled task creation (persistence)
-event.dataset : "windows.sysmon_operational" and event.code : "1" and process.name : "schtasks.exe"
-
-# PowerShell script block logging — encoded/suspicious content
-event.dataset : "windows.powershell_operational" and event.code : "4104" and winlog.event_data.ScriptBlockText : (*invoke* or *bypass* or *encoded* or *iex*)
-
-# Active Directory — new user creation (Security Event 4720)
-event.dataset : "system.security" and event.code : "4720"
-
-# AD — user added to privileged group (Security Event 4728 = Domain Admins)
+# AD: user added to Domain Admins (Security 4728)
 event.dataset : "system.security" and event.code : "4728"
 
-# AD — failed logon across domain (Security Event 4625) — brute force indicator
+# AD: failed logon — brute force / password spray (4625)
 event.dataset : "system.security" and event.code : "4625"
 
-# AD — Kerberos pre-authentication failure (4771) — AS-REP roasting or password spray
-event.dataset : "system.security" and event.code : "4771"
-
-# Lateral movement — remote service creation on a domain host (Security Event 7045)
+# Lateral movement: remote service creation (System 7045)
 event.dataset : "system.system" and event.code : "7045"
 
-# Scope all AD/domain activity to a specific host
-agent.hostname : "win-dc" and event.dataset : "system.security"
+# Caldera sandcat beaconing
+destination.ip : "192.168.56.10" and destination.port : 8888
+
+# CloudTrail S3 access in LocalStack
+event.dataset : "aws.cloudtrail" and cloud.service.name : "s3.amazonaws.com"
 ```
 
 ---
 
-## Lab Management
+## Project structure
+
+```
+hunt_lab/
+├── setup.sh                                  # Linux/macOS quick-start
+├── setup.ps1                                 # Windows quick-start
+├── Vagrantfile                               # Defines the 4 lab VMs
+├── docker/
+│   ├── docker-compose.yml                    # SIEM + C2 + LocalStack stack
+│   ├── setup.sh                              # Runs inside docker-host
+│   ├── .env.example                          # Copy to .env (HOST_IP, passwords)
+│   ├── bootstrap/
+│   │   ├── bootstrap.sh                      # One-shot init (Fleet, Caldera, S3)
+│   │   └── generate_cloudtrail_activity.sh   # Synthetic AWS event emitter
+│   ├── cloudtrail/                           # Filebeat input directory
+│   └── config/
+│       ├── caldera/local.yml                 # Caldera config (HOST_IP injected)
+│       └── filebeat/filebeat.yml             # Ships CloudTrail logs to ES
+├── kibana/
+│   ├── hunt_report_template.ndjson           # Saved-objects export
+│   ├── create_all_objects.py                 # Programmatic object creation
+│   ├── generate_template.py                  # Regenerate the NDJSON
+│   └── README.md
+└── scripts/
+    ├── install_docker.sh                     # docker-host: Docker Engine + Compose
+    ├── setup_dc.ps1                          # win-dc stage 1: AD DS + DC promotion
+    ├── setup_dc_post_reboot.ps1              # win-dc stage 2: OUs/users + agents
+    ├── setup_win_server.ps1                  # win-server stage 1: domain join
+    ├── setup_win_server_tools.ps1            # win-server stage 2: agents
+    ├── install_win_tools.ps1                 # win11-victim: Sysmon + Elastic Agent
+    ├── join_domain.ps1                       # win11-victim: domain join
+    ├── deploy_caldera_agent.ps1              # Standalone sandcat (re)deploy
+    ├── install_atomic_red_team.ps1           # Invoke-AtomicRedTeam + atomics library
+    ├── caldera_ransomhub_setup.py            # Pushes RansomHub abilities/adversary
+    └── scenarios/
+        └── ransomhub/                        # DFIR-RansomHub-2025-Lab assets
+            ├── README.md
+            ├── seed_decoy_data.ps1           # Stages C:\Shares\Finance\
+            ├── seed_localstack_bucket.sh     # Creates s3://ransomhub-exfil-lab
+            ├── fake_amd64.ps1                # Benign rename-and-note simulator
+            ├── nocmd.vbs / rcl.bat / include.txt  # Exfil wrapper artifacts
+            └── ransom_note.txt
+```
+
+**Files generated at runtime (git-ignored):**
+
+| File                          | Written by                       | Consumed by                  |
+|-------------------------------|----------------------------------|------------------------------|
+| `elastic-credentials.txt`     | bootstrap container              | `setup.ps1`, you             |
+| `fleet-enrollment-token.txt`  | bootstrap container              | All Windows agent installs   |
+| `domain-info.txt`             | `setup_dc_post_reboot.ps1`       | `setup_win_server.ps1`, `join_domain.ps1` |
+
+---
+
+## Lab management
 
 ```bash
-# SSH into a Linux VM
-vagrant ssh elastic-siem
-vagrant ssh caldera
-vagrant ssh cloud-sim
+# Where to look
+vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose logs -f'
+vagrant rdp win-dc        # or win-server, win11-victim
 
-# RDP into Windows VMs
-vagrant rdp win11-victim
-vagrant rdp win-dc
-vagrant rdp win-server
-
-# Suspend / resume all VMs
-vagrant suspend
-vagrant resume
-
-# Tear down and rebuild everything
-vagrant destroy -f
-bash setup.sh          # or .\setup.ps1 on Windows
+# Re-run a single provisioner step
+vagrant provision win-dc --provision-with setup_dc_post_reboot
+vagrant provision win-server --provision-with seed_ransomhub_decoy
 
 # Rebuild a single VM
 vagrant destroy win11-victim -f
 vagrant up win11-victim --provision
 
-vagrant destroy cloud-sim -f
-vagrant up cloud-sim --provision
-
-# Rebuild the domain (must destroy member before DC or domain-info.txt guard fires)
-vagrant destroy win-server -f
-vagrant destroy win-dc -f
+# Rebuild domain (destroy member before DC, otherwise the join guard fires)
+vagrant destroy win-server win-dc -f
 vagrant up win-dc --provision
 vagrant up win-server --provision
 
-# Re-provision without destroying
-vagrant provision elastic-siem
+# Re-deploy sandcat without full reprovision
+vagrant provision <vm> --provision-with deploy_caldera_agent
 
-# Domain-join win11-victim to lab.local (optional, after win-dc is up)
-vagrant provision win11-victim --provision-with join_domain
-```
+# Tear it all down
+vagrant destroy -f
 
-### Re-deploying the Caldera sandcat agent
+# Restart just the container stack (data preserved)
+vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose restart'
 
-If the agent stops beaconing (e.g., after the VM is rebuilt), re-deploy it without a full reprovision:
-
-```bash
-# Victim workstation
-vagrant up win11-victim
-vagrant provision win11-victim --provision-with deploy_caldera_agent
-
-# Domain controller
-vagrant provision win-dc --provision-with deploy_caldera_agent
-
-# Member server
-vagrant provision win-server --provision-with deploy_caldera_agent
-```
-
-Or run the standalone script manually over WinRM:
-
-```bash
-vagrant winrm win11-victim -e -c "powershell -ExecutionPolicy Bypass -File C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+# Wipe container data and rebootstrap
+vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose down -v && sudo bash setup.sh'
 ```
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `curl: (22) 404` when downloading vagrant-vmware-utility | Old URL format tried a `.zip` that doesn't exist on Linux | `setup.sh` downloads the `.deb` directly — ensure you're running the current version |
-| `sudo: a terminal is required` | Running `setup.sh` without a TTY (e.g., from a non-interactive shell) | Run from a proper terminal: `bash setup.sh` |
-| `A Vagrant environment or target machine is required` | Vagrant can't find the Vagrantfile | Always run `setup.sh` from the `hunt_lab/` directory, or the script does `cd` automatically |
-| `vmrun -T player snapshot … Error: not supported` | Plugin tries to create a linked clone; VMware Player mode doesn't support snapshots | Already fixed: Linux VMs use full clones, and `win11-victim` forces Workstation mode for linked clones |
-| `The provider 'vmware_desktop' could not be found` when running as root | Vagrant plugins are per-user; root has a separate plugin directory | Run `sudo vagrant plugin install vagrant-vmware-desktop` before re-running as root |
-| `Permission denied @ rb_sysopen … .vmx (Errno::EACCES)` | A previous `sudo` run left `.vagrant/` owned by root | `sudo chown -R $USER:$USER .vagrant && vagrant destroy -f && vagrant up` |
-| `Unable to create logs dir /usr/share/elasticsearch/logs` (exit 78) | `elasticsearch.yml` overwrite removed the default `path.logs` setting | Fixed in `install_elastic.sh`: explicit `path.data` and `path.logs` set |
-| `gpg: cannot open '/dev/tty'` on re-provision | GPG prompts interactively to overwrite an existing keyring file | Fixed in `install_elastic.sh`: `gpg --batch --yes --dearmor` |
-| `win11-victim` network adapter gets `169.254.x.x` (APIPA) | Vagrant cannot auto-configure the secondary VMware adapter on Windows | Fixed in `install_win_tools.ps1`: APIPA adapter is detected and statically assigned `192.168.56.20/24` |
-| Fleet Server connection refused on port 8220 | Fleet Server bound to `localhost` only | Fixed in `install_elastic.sh`: `--fleet-server-host=0.0.0.0` |
-| Caldera container restart-loops: `TypeError: encoding without a string argument` | `crypt_salt` and `encryption_key` missing from `local.yml` | Fixed in `install_caldera.sh`: both keys are written to the config template |
-| Caldera login loops back to `/login` with correct credentials | Magma Vue UI built without `VITE_CALDERA_URL`; all API calls go to the user's localhost | Fixed in `install_caldera.sh`: build step sets `VITE_CALDERA_URL=http://192.168.56.30:8888` |
-| Sandcat agent downloads but never beacons | Process launched with `Start-Process` inside WinRM session dies when session closes | Fixed in `install_win_tools.ps1`: agent registered as a Scheduled Task and started via `Start-ScheduledTask` |
-| `vagrant provision` reports exit 1 even though script output shows "complete" | PS 5.1 `NativeCommandError` from native-EXE stderr (Sysmon, elastic-agent) propagates through the WinRM shell | Fixed in `install_win_tools.ps1`: `Start-Process -RedirectStandardOutput/-RedirectStandardError` runs Sysmon and elastic-agent with I/O redirected at OS level so PS never sees their stderr |
-| `CloneFolderNotFolder` error during `vagrant up win11-victim` | VMware's background VM-discovery service deletes the clone directory while the 16 GB disk is still being copied by the plugin's full-copy loop | Already fixed in Vagrantfile: `v.force_vmware_license = "workstation"` + `v.linked_clone = true` forces `vmrun -T ws` linked clones instead of a file copy |
-| `elastic-agent: Error: already installed` on re-provision | A prior partial run installed the agent; re-provisioning hits the guard and `$ErrorActionPreference = Stop` exits the script | Already fixed in `install_win_tools.ps1`: pre-install check skips the install if the service already exists |
-| `Timed out while waiting for the machine to boot` on `vagrant reload win11-victim` | Windows 11 exceeds Vagrant's 300-second default WinRM boot timeout | Already fixed in Vagrantfile: `win.vm.boot_timeout = 600` |
-| Elastic Agent shows `HEALTHY` in Fleet but zero documents appear in Discover | Fleet default output is `localhost:9200` — correct for the Fleet Server VM but wrong for remote agents; win11-victim has no Elasticsearch on its loopback | Already fixed in `install_elastic.sh`: output is patched to `http://192.168.56.10:9200` immediately after Fleet is ready |
-| No Sysmon / PowerShell / Defender events in Kibana despite agent being online | `Windows Endpoint Policy` only had the `system` integration — the `windows` package (winlog inputs) was not configured | Already fixed in `install_elastic.sh`: `windows-1` package policy (Sysmon, PowerShell operational, Defender channels) is added to the policy via Fleet API on every provision |
-| Kibana comes up, but the hunt dashboard template is missing | Kibana was not ready before the auto-import timeout expired | Re-run the import manually with the command in `kibana/README.md` |
-| No cloud activity appears in Kibana | `cloud-sim` was not provisioned or Filebeat is not shipping from `192.168.56.40` | Run `vagrant up cloud-sim --provision`, then verify Filebeat and LocalStack inside the VM |
-| VMs don't appear in VMware Workstation GUI | Vagrant manages them outside the GUI's default library | Open them manually: **File → Open** → browse to `.vagrant/machines/<name>/vmware_desktop/<name>.vmx` |
-| `setup.ps1` says VMware not installed, but it is (non-C: drive) | `Get-Command vmrun` only searches `%PATH%`; installer on non-default drives may not update PATH | Fixed in `setup.ps1`: falls back to registry `HKLM:\SOFTWARE\WOW6432Node\VMware, Inc.\VMware Workstation\InstallPath` and adds the directory to PATH for the session |
-| `win-dc` provision hangs indefinitely after DC promotion reboot | WinRM retries exhaust before AD finishes coming online post-reboot | Already mitigated: `dc.winrm.retry_limit = 60` / `retry_delay = 15` gives up to 15 minutes; if still hanging, `vagrant provision win-dc --provision-with setup_dc_post_reboot` once the VM is back |
-| `win-server` guard fails: `domain-info.txt not found` | `win-dc` stage 2 (`setup_dc_post_reboot.ps1`) did not complete successfully | Check `C:\Windows\Temp\setup-dc-stage2.log` on `win-dc`; re-run with `vagrant provision win-dc --provision-with setup_dc_post_reboot` |
-| `Add-Computer` fails: `The specified domain either does not exist or could not be contacted` | `win-server` DNS not yet pointing at the DC, or the DC is still booting | `setup_win_server.ps1` sets the DNS server to `192.168.56.50`; if the DC was slow, re-run with `vagrant provision win-server --provision-with setup_win_server` (the reboot provisioner is idempotent) |
-| `win-server` or `win-dc` APIPA adapter not detected | VM already has a static IP from a previous run | The APIPA check in `setup_win_server.ps1` / `setup_dc.ps1` will log a warning and continue; no action needed |
-| Domain users not visible in AD after full reprovision | `win-dc` was destroyed and rebuilt but `domain-info.txt` was not overwritten before `win-server` read it | Destroy both in order: `vagrant destroy win-server win-dc -f`, then `vagrant up win-dc --provision` followed by `vagrant up win-server --provision` |
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `fleet-enrollment-token.txt not found` when bringing up a Windows VM | `docker-host` provisioning didn't finish | `vagrant up docker-host --provision` and wait for it to complete |
+| `domain-info.txt not found` when bringing up `win-server` / `win11-victim` | `win-dc` stage 2 didn't finish | Check `C:\Windows\Temp\setup-dc-stage2.log` on `win-dc`; re-run `vagrant provision win-dc --provision-with setup_dc_post_reboot` |
+| Elastic Agent shows `HEALTHY` in Fleet but Discover is empty | Fleet output still pointing at `localhost:9200` | The bootstrap container patches the output to `http://192.168.56.10:9200` — re-run `docker compose run --rm bootstrap` from `docker-host` |
+| Caldera login loops back to `/login` | Magma UI built without `VITE_CALDERA_URL` | Already handled by the official 5.x image; ensure your `HOST_IP` in `docker/.env` is correct |
+| Sandcat downloads but never beacons | Process started in a WinRM session and died on disconnect | Re-run `vagrant provision <vm> --provision-with deploy_caldera_agent` — the agent is registered as the `WindowsSecurityUpdate` scheduled task and started via `Start-ScheduledTask` |
+| `vagrant up win-dc` hangs after promotion reboot | WinRM retries exhausted before AD finished coming online | `dc.winrm.retry_limit = 60` (15 min); if still hanging, re-run `vagrant provision win-dc --provision-with setup_dc_post_reboot` once the VM is back |
+| `win11-victim` clone fails with `CloneFolderNotFolder` | VMware service interferes with the full-copy loop | Already handled in `Vagrantfile` — `force_vmware_license = "workstation"` + `linked_clone = true` forces `vmrun -T ws` linked clones |
+| `setup.ps1` says VMware not installed (but it is) | VMware on a non-`C:` drive not on `%PATH%` | `setup.ps1` falls back to the registry `InstallPath` and adds it to `$env:PATH` for the session |
+| `Permission denied` on `.vagrant/` after a `sudo` run | A prior `sudo vagrant` left `.vagrant/` owned by root | `sudo chown -R $USER:$USER .vagrant && vagrant destroy -f && vagrant up` |
+| Elasticsearch OOMs / restart-loops | docker-host RAM too low | Increase `docker-host` `v.memory` in `Vagrantfile` (default 12 GB); Elastic alone wants ~4 GB |
+
+---
+
+## Notes
+
+- This is a **lab environment**. Defender real-time protection is disabled on
+  the victim, the domain has weak/known passwords, and HTTPS is off across the
+  Elastic stack. Don't connect it to anything you care about.
+- The RansomHub recreation runs a **benign** simulator (`fake_amd64.ps1` —
+  rename-and-note only). No real encryption happens to the decoy share.
+- LocalStack runs in Community mode by default. Drop a token into
+  `localstack-auth-token.txt` at the repo root to enable Pro features.

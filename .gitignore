@@ -6,6 +6,7 @@
 elastic-credentials.txt
 fleet-enrollment-token.txt
 localstack-auth-token.txt
+domain-info.txt
 docker/.env
 
 # ── Generated runtime data ────────────────────────────────────────────────────

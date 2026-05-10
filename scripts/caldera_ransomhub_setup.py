@@ -4,8 +4,8 @@ caldera_ransomhub_setup.py
 Hunt Lab recreation of The DFIR Report (2025-06):
 "Hide Your RDP: Password Spray Leads to RansomHub Deployment".
 
-POSTs ~12 abilities and one adversary "DFIR-RansomHub-2025-Lab" into
-Caldera at http://192.168.56.10:8888 so it can be run against agent
+POSTs 12 attack abilities + 3 dwell-time abilities and one adversary
+"DFIR-RansomHub-2025-Lab" into Caldera so it can be run against agent
 group 'red' (the three Windows lab VMs).
 
 Skipped vs the report (out of scope per agreed lab plan):
@@ -15,12 +15,13 @@ Skipped vs the report (out of scope per agreed lab plan):
     simulator instead)
   - Real off-network exfil (we exfil to LocalStack S3 instead)
 
-Pre-reqs before running an operation:
-  bash docker/setup.sh                                                  # stack up
-  vagrant up win-dc win-server win11-victim --no-parallel               # VMs up
-  vagrant ssh-equivalent on win-server: powershell -File C:\\vagrant\\scripts\\scenarios\\ransomhub\\seed_decoy_data.ps1
-  bash scripts/scenarios/ransomhub/seed_localstack_bucket.sh
-  python3 scripts/caldera_ransomhub_setup.py                            # this script
+This script runs automatically inside the bootstrap container after
+`docker/setup.sh` brings the stack up — you do not need to invoke it
+manually. It is idempotent (PUTs each ability by ID), so re-running it
+to pick up edits is safe.
+
+Manual re-run (e.g. after editing dwell defaults):
+  python3 scripts/caldera_ransomhub_setup.py
 
 Then in Caldera UI: Operations -> New Operation -> Adversary
   "DFIR-RansomHub-2025-Lab", Group "red", Start.

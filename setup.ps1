@@ -360,20 +360,8 @@ if (Test-Path $TemplateNdjson) {
     Write-Warn "Template file not found at $TemplateNdjson — skipping import."
 }
 
-# --- Load Hunt Lab abilities into Caldera ---
-Write-Log "Loading Hunt Lab abilities into Caldera..."
-$CalderaSetup = Join-Path $PSScriptRoot "scripts\caldera_setup.py"
-if ((Test-Path $CalderaSetup) -and (Get-Command python -ErrorAction SilentlyContinue)) {
-    try {
-        $output = & python $CalderaSetup 2>&1
-        $output | ForEach-Object { Write-Log "  $_" }
-        Write-Ok "Caldera abilities loaded."
-    } catch {
-        Write-Warn "Caldera setup failed: $_ — run manually: python scripts\caldera_setup.py"
-    }
-} else {
-    Write-Warn "caldera_setup.py or python not found — run manually: python scripts\caldera_setup.py"
-}
+# Caldera abilities are loaded by the bootstrap container during
+# docker/setup.sh (see docker/bootstrap/bootstrap.sh) — nothing to do here.
 
 # --- 8. Bring up Windows VMs ---
 Write-Log "Step 2/4 - win-dc (Active Directory DC)..."
