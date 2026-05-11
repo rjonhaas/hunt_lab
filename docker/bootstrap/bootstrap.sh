@@ -106,11 +106,30 @@ if [[ -f "${ENV_FILE}" ]]; then
   EXISTING_TOKEN=$(grep -E '^FLEET_SERVER_SERVICE_TOKEN=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '\r\n' || true)
 fi
 
+TOKEN_VALID=0
 if [[ -n "${EXISTING_TOKEN}" ]]; then
+  # Validate the token actually works against this Elasticsearch. After a
+  # teardown/rebuild the .env still carries the old token but ES has a fresh
+  # token store, so blindly reusing produces a 401-loop on fleet-server.
+  AUTH_HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer ${EXISTING_TOKEN}" \
+    "${ES_URL}/_security/_authenticate" || echo "000")
+  if [[ "${AUTH_HTTP}" == "200" ]]; then
+    TOKEN_VALID=1
+  else
+    log "Existing FLEET_SERVER_SERVICE_TOKEN in .env is stale (auth HTTP ${AUTH_HTTP}); minting a new one."
+  fi
+fi
+
+if [[ "${TOKEN_VALID}" -eq 1 ]]; then
   log "Reusing Fleet Server service token from .env (idempotent re-run)."
   SERVICE_TOKEN="${EXISTING_TOKEN}"
 else
   log "Creating Fleet Server service token..."
+  # Delete any prior token with the same name; ES rejects duplicate names.
+  es_api -X DELETE \
+    "${ES_URL}/_security/service/elastic/fleet-server/credential/token/hunt-lab-fleet-token" \
+    > /dev/null 2>&1 || true
   TOKEN_RESPONSE=$(es_api -X POST \
     "${ES_URL}/_security/service/elastic/fleet-server/credential/token/hunt-lab-fleet-token")
 

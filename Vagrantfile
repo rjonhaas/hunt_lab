@@ -67,6 +67,15 @@ Vagrant.configure("2") do |config|
     dh.vm.provision "shell", name: "seed_env",
       privileged: false, inline: <<~SHELL
         set -euo pipefail
+        # vagrant-vmware-desktop 3.0.5 sometimes finishes booting before the
+        # HGFS shared folder is mounted, so inline provisioners that touch
+        # /vagrant race the mount. Wait up to 2 minutes for it to appear.
+        for i in $(seq 1 60); do
+          [[ -d /vagrant/docker ]] && break
+          echo "[seed_env] /vagrant not mounted yet (attempt $i)..."
+          sleep 2
+        done
+        [[ -d /vagrant/docker ]] || { echo "[seed_env] FATAL: /vagrant/docker still not mounted after 120s"; exit 1; }
         cd /vagrant/docker
         if [[ ! -f .env ]]; then
           cp .env.example .env
@@ -86,6 +95,12 @@ Vagrant.configure("2") do |config|
     dh.vm.provision "shell", name: "docker_stack_up",
       privileged: false, inline: <<~SHELL
         set -e
+        for i in $(seq 1 60); do
+          [[ -f /vagrant/docker/setup.sh ]] && break
+          echo "[docker_stack_up] /vagrant/docker/setup.sh not visible yet (attempt $i)..."
+          sleep 2
+        done
+        [[ -f /vagrant/docker/setup.sh ]] || { echo "[docker_stack_up] FATAL: /vagrant/docker/setup.sh missing after 120s"; exit 1; }
         sudo bash /vagrant/docker/setup.sh
       SHELL
   end
