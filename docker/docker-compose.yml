@@ -83,6 +83,7 @@ services:
       - ELASTICSEARCH_PASSWORD=${KIBANA_SYSTEM_PASSWORD:?KIBANA_SYSTEM_PASSWORD is required}
       - XPACK_FLEET_ENABLED=true
       - XPACK_FLEET_PACKAGES=[{"name":"fleet_server","version":"latest"},{"name":"system","version":"latest"},{"name":"elastic_agent","version":"latest"},{"name":"windows","version":"latest"}]
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=hunt_lab_kibana_saved_objects_key_2026
     ports:
       - "5601:5601"
     volumes:
@@ -180,7 +181,7 @@ services:
       hunt_net:
         ipv4_address: 172.20.0.30
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8888/api/v2/health"]
+      test: ["CMD", "curl", "-sf", "-H", "KEY: ADMIN123", "http://localhost:8888/api/v2/health"]
       interval: 30s
       timeout: 10s
       retries: 5

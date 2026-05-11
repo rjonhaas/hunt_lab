@@ -95,16 +95,26 @@ else
 fi
 
 # ── 4b. Create Fleet Server service token (idempotent) ────────────────────────
-log "Creating Fleet Server service token..."
-# Delete any pre-existing token so this script is safe to re-run
-curl -sf -X DELETE -u "elastic:${ELASTIC_PASSWORD}" \
-  "${ES_URL}/_security/service/elastic/fleet-server/credential/token/hunt-lab-fleet-token" \
-  > /dev/null 2>&1 || true
+# Re-using the existing token from .env is critical when bootstrap is re-run:
+# rotating the token invalidates the live fleet-server container, which then
+# can't read .fleet-policies / .fleet-actions and silently stops delivering
+# policy updates to enrolled agents. Only mint a new token if .env doesn't
+# already carry one.
+EXISTING_TOKEN=""
+if [[ -f "${ENV_FILE}" ]]; then
+  # tr strips the trailing \r in case .env was edited on Windows (CRLF)
+  EXISTING_TOKEN=$(grep -E '^FLEET_SERVER_SERVICE_TOKEN=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '\r\n' || true)
+fi
 
-TOKEN_RESPONSE=$(es_api -X POST \
-  "${ES_URL}/_security/service/elastic/fleet-server/credential/token/hunt-lab-fleet-token")
+if [[ -n "${EXISTING_TOKEN}" ]]; then
+  log "Reusing Fleet Server service token from .env (idempotent re-run)."
+  SERVICE_TOKEN="${EXISTING_TOKEN}"
+else
+  log "Creating Fleet Server service token..."
+  TOKEN_RESPONSE=$(es_api -X POST \
+    "${ES_URL}/_security/service/elastic/fleet-server/credential/token/hunt-lab-fleet-token")
 
-SERVICE_TOKEN=$(echo "${TOKEN_RESPONSE}" | python3 -c "
+  SERVICE_TOKEN=$(echo "${TOKEN_RESPONSE}" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 if 'token' not in d:
@@ -112,7 +122,8 @@ if 'token' not in d:
     sys.exit(1)
 print(d['token']['value'])
 ")
-log "Fleet Server service token created."
+  log "Fleet Server service token created."
+fi
 
 # Write token into .env so docker-compose can pass it to fleet-server on (re)start
 if [[ -f "${ENV_FILE}" ]]; then
@@ -215,8 +226,8 @@ print('1' if attached else '')
 
 if [[ -z "${HAS_WINDOWS_INTEGRATION}" ]]; then
   log "Attaching Windows integration to hunt-lab-windows policy..."
-  EXISTING_POLICY_ID="${EXISTING_POLICY_ID}" KB_URL="${KB_URL}" ELASTIC_PASSWORD="${ELASTIC_PASSWORD}" python3 - <<'PY'
-import os, json, urllib.request, base64, sys
+  EXISTING_POLICY_ID="${EXISTING_POLICY_ID}" KB_URL="${KB_URL}" ELASTIC_PASSWORD="${ELASTIC_PASSWORD}" python3 - <<'PY' || die "Windows integration attach failed — see error above"
+import os, json, urllib.request, urllib.error, base64, sys, time
 KB = os.environ['KB_URL']
 POLICY_ID = os.environ['EXISTING_POLICY_ID']
 auth = base64.b64encode(f"elastic:{os.environ['ELASTIC_PASSWORD']}".encode()).decode()
@@ -226,16 +237,39 @@ def req(method, path, body=None):
     data = json.dumps(body).encode() if body else None
     r = urllib.request.Request(KB+path, data=data, method=method, headers=HDRS)
     try:
-        with urllib.request.urlopen(r, timeout=30) as resp:
+        with urllib.request.urlopen(r, timeout=60) as resp:
             return resp.status, json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        return e.code, e.read().decode()[:400]
+        return e.code, e.read().decode()[:600]
 
 s, info = req('GET', '/api/fleet/epm/packages/windows')
+if s >= 300 or not isinstance(info, dict) or 'item' not in info:
+    print(f"[bootstrap] FATAL: GET /api/fleet/epm/packages/windows -> {s} {info!r}", file=sys.stderr)
+    sys.exit(1)
 pkg = info['item']; ver = pkg['version']
-req('POST', f'/api/fleet/epm/packages/windows/{ver}', {'force': True})
 
-# Build inputs from data_streams + policy_templates
+# Force-install the package; the version-pinned POST returns the installed package
+s, resp = req('POST', f'/api/fleet/epm/packages/windows/{ver}', {'force': True})
+if s >= 300:
+    print(f"[bootstrap] FATAL: install windows {ver} -> {s} {resp!r}", file=sys.stderr)
+    sys.exit(1)
+
+# Build inputs from data_streams + policy_templates. For each stream we must
+# echo back the vars the package declares (especially required toggles like
+# preserve_original_event), otherwise package_policies returns HTTP 400.
+def var_default(v):
+    t = v.get('type', 'text')
+    if 'default' in v: return v['default']
+    if t in ('bool', 'yaml'): return False if t == 'bool' else ''
+    if v.get('multi'): return []
+    return ''
+
+def stream_vars(stream_def):
+    out = {}
+    for v in stream_def.get('vars', []) or []:
+        out[v['name']] = {'type': v.get('type','text'), 'value': var_default(v)}
+    return out
+
 templates = pkg.get('policy_templates', [])
 inputs = []
 for t in templates:
@@ -247,16 +281,42 @@ for t in templates:
                     streams.append({
                         'enabled': True,
                         'data_stream': {'dataset': ds['dataset'], 'type': ds.get('type','logs')},
+                        'vars': stream_vars(stream),
                     })
         inputs.append({'type': i['type'], 'policy_template': t['name'], 'enabled': True, 'streams': streams})
 
-s, resp = req('POST', '/api/fleet/package_policies', {
+attach_body = {
     'name': 'windows-1', 'namespace': 'default', 'policy_id': POLICY_ID, 'enabled': True,
     'package': {'name': 'windows', 'version': ver, 'title': pkg.get('title','Windows')},
     'inputs': inputs,
-})
-print(f"  windows integration attach HTTP {s}", file=sys.stderr)
-if s >= 300: print(f"  {resp}", file=sys.stderr)
+}
+
+last_status, last_resp = None, None
+for attempt in (1, 2, 3):
+    s, resp = req('POST', '/api/fleet/package_policies', attach_body)
+    last_status, last_resp = s, resp
+    print(f"[bootstrap] windows integration attach attempt {attempt}: HTTP {s}", file=sys.stderr)
+    if s < 300:
+        break
+    print(f"[bootstrap]   body: {resp!r}", file=sys.stderr)
+    time.sleep(5)
+
+if last_status is None or last_status >= 300:
+    print(f"[bootstrap] FATAL: package_policies POST never succeeded (last={last_status})", file=sys.stderr)
+    sys.exit(1)
+
+# Verify attachment actually shows up in the policy listing
+s, listing = req('GET', '/api/fleet/package_policies?perPage=100')
+if s >= 300:
+    print(f"[bootstrap] FATAL: verify GET package_policies -> {s}", file=sys.stderr)
+    sys.exit(1)
+attached = [p for p in listing.get('items', [])
+            if p.get('policy_id') == POLICY_ID
+            and (p.get('package') or {}).get('name') == 'windows']
+if not attached:
+    print(f"[bootstrap] FATAL: windows package_policy missing after POST (got 200 but no attachment)", file=sys.stderr)
+    sys.exit(1)
+print(f"[bootstrap] windows integration confirmed on policy {POLICY_ID} (package_policy id={attached[0].get('id')})", file=sys.stderr)
 PY
   log "Windows integration attached."
 else
