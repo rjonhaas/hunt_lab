@@ -7,11 +7,16 @@ elastic-credentials.txt
 fleet-enrollment-token.txt
 localstack-auth-token.txt
 domain-info.txt
+lab-info.md
 docker/.env
 
 # ── Generated runtime data ────────────────────────────────────────────────────
 docker/cloudtrail/
+triage_output/
 .claude/
+
+# ── Local setup logs ──────────────────────────────────────────────────────────
+.rebuild-logs/
 
 # ── Vagrant box cache ─────────────────────────────────────────────────────────
 *.box
