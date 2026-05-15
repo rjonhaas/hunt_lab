@@ -138,7 +138,7 @@ def dwell_ability(ability_id, name, seconds, description):
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "identity-chain", "dwell"],
         "buckets": ["dwell"],
@@ -177,7 +177,7 @@ abilities = [
         "requirements": [],
         "privilege": "Elevated",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "identity-chain", "prep"],
         "buckets": ["persistence"],
@@ -204,7 +204,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "identity-chain", "credential-access", "atomic"],
         "buckets": ["credential-access"],
@@ -242,7 +242,7 @@ abilities = [
         "requirements": [],
         "privilege": "Elevated",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "identity-chain", "credential-access", "atomic"],
         "buckets": ["credential-access"],
@@ -278,7 +278,7 @@ abilities = [
         "requirements": [],
         "privilege": "Elevated",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "identity-chain", "credential-access", "atomic"],
         "buckets": ["credential-access"],
@@ -310,7 +310,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "identity-chain", "lateral-movement", "atomic"],
         "buckets": ["lateral-movement"],
@@ -335,7 +335,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "identity-chain", "defense-evasion"],
         "buckets": ["defense-evasion"],
@@ -400,7 +400,7 @@ if __name__ == "__main__":
         print("  id-04-pass-the-ticket -> win-server")
         print("  id-05-cleanup        -> win-server")
         print()
-        print(f"  Caldera: {CALDERA}  (admin / admin)")
+        print(f"  Caldera: {CALDERA}  (admin / HuntLab2026!)")
     else:
         print("Some objects failed - see errors above.", file=sys.stderr)
         sys.exit(1)

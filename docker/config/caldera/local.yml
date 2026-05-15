@@ -30,10 +30,10 @@ app.contact.websocket: 0.0.0.0:7012
 # Default admin credentials — change if exposing beyond the local network
 users:
   red:
-    admin: admin
-    red: admin
+    admin: HuntLab2026!
+    red: HuntLab2026!
   blue:
-    blue: admin
+    blue: HuntLab2026!
 api_key_red: ADMIN123
 api_key_blue: BLUEADMIN123
 

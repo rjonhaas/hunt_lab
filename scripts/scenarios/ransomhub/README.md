@@ -46,7 +46,7 @@ wipe — they are idempotent.
 
 ## Running it
 
-Log into Caldera at `http://<docker-host-ip>:8888` (admin / admin) and:
+Log into Caldera at `http://<docker-host-ip>:8888` (admin / HuntLab2026!) and:
 
 **Operations → New Operation**
 

