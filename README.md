@@ -139,7 +139,7 @@ If a step fails, re-run only that VM: `vagrant up <name> --provision`.
 | Service           | URL / Address              | Credentials                               |
 |-------------------|----------------------------|-------------------------------------------|
 | Kibana (SIEM)     | http://192.168.56.10:5601  | `elastic` / see `elastic-credentials.txt` |
-| Caldera (C2)      | http://192.168.56.10:8888  | `admin` / `admin`                         |
+| Caldera (C2)      | http://192.168.56.10:8888  | `admin` / `HuntLab2026!`                  |
 | Fleet Server      | http://192.168.56.10:8220  | internal — used by Elastic Agent          |
 | LocalStack API    | http://192.168.56.10:4566  | local test credentials (`test` / `test`)  |
 | Elasticsearch API | http://192.168.56.10:9200  | same as Kibana                            |

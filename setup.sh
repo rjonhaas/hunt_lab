@@ -168,7 +168,7 @@ _This file contains credentials and is gitignored. Regenerated on every \`setup.
 | Kibana (SIEM) | http://${HOST_IP}:5601 | \`elastic\` / \`${ELASTIC_PASS}\` |
 | Elasticsearch | http://${HOST_IP}:9200 | \`elastic\` / \`${ELASTIC_PASS}\` |
 | Fleet Server | http://${HOST_IP}:8220 | — |
-| Caldera (C2) | http://${HOST_IP}:8888 | \`admin\` / \`admin\` (red API key: \`ADMIN123\`) |
+| Caldera (C2) | http://${HOST_IP}:8888 | \`admin\` / \`HuntLab2026!\` (red API key: \`ADMIN123\`) |
 | LocalStack | http://${HOST_IP}:4566 | \`test\` / \`test\` (any region) |
 
 ## Active Directory

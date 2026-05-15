@@ -438,7 +438,7 @@ _This file contains credentials and is gitignored. Regenerated on every ``setup.
 | Kibana (SIEM) | http://${HostIP}:5601 | ``$esUser`` / ``$esPass`` |
 | Elasticsearch | http://${HostIP}:9200 | ``$esUser`` / ``$esPass`` |
 | Fleet Server | http://${HostIP}:8220 | — |
-| Caldera (C2) | http://${HostIP}:8888 | ``admin`` / ``admin`` (red API key: ``ADMIN123``) |
+| Caldera (C2) | http://${HostIP}:8888 | ``admin`` / ``HuntLab2026!`` (red API key: ``ADMIN123``) |
 | LocalStack | http://${HostIP}:4566 | ``test`` / ``test`` (any region) |
 
 ## Active Directory
