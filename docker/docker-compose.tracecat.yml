@@ -1,0 +1,348 @@
+# docker-compose.tracecat.yml
+# Optional SOAR overlay — adds Tracecat to the hunt lab.
+#
+# Tracecat receives Kibana webhook alerts, runs automated playbooks, and
+# provides case management for the RansomHub and Identity Chain scenarios.
+#
+# ── Usage ─────────────────────────────────────────────────────────────────────
+#
+#   # Start the main lab first (or alongside):
+#   docker compose up -d
+#
+#   # Then start Tracecat in a separate step:
+#   docker compose -f docker-compose.tracecat.yml --env-file .env.tracecat up -d
+#
+#   # Or start everything together:
+#   docker compose -f docker-compose.yml -f docker-compose.tracecat.yml \
+#     --env-file .env --env-file .env.tracecat up -d
+#
+#   UI: http://<HOST_IP>:8089
+#   Webhook base: http://<HOST_IP>:8089/api/webhooks/<workflow-id>
+#
+# ── Setup ─────────────────────────────────────────────────────────────────────
+#
+#   1. cp .env.tracecat.example .env.tracecat
+#   2. Generate secrets (see .env.tracecat.example for commands).
+#   3. Set TRACECAT__AUTH_SUPERADMIN_EMAIL to your email.
+#   4. Verify HOST_IP matches your docker-host (default: 192.168.56.10).
+#
+# ── What this includes ────────────────────────────────────────────────────────
+#
+#   Caddy (reverse proxy), API, Worker, Executor, UI, Migrations,
+#   PostgreSQL, Temporal + Temporal PostgreSQL, Redis, MinIO.
+#
+#   Intentionally omitted (AI-agent tier, ~20 GB extra RAM):
+#   agent-worker, agent-executor, litellm, mcp.
+#   Add them from the upstream docker-compose.yml if you want AI playbooks.
+#
+# ── Network ───────────────────────────────────────────────────────────────────
+#
+#   Tracecat services sit on an isolated tracecat_core network.
+#   api, worker, and executor are also attached to hunt_net (the main lab
+#   network) so playbook actions can query Elasticsearch at 172.20.0.10:9200
+#   and Kibana at 172.20.0.11:5601 directly from workflow steps.
+#
+
+# ── YAML anchors ──────────────────────────────────────────────────────────────
+
+x-tracecat-image: &tracecat-image
+  image: ghcr.io/tracecathq/tracecat:${TRACECAT__IMAGE_TAG:-1.0.0-beta.47}
+  restart: unless-stopped
+
+# Environment vars shared by api / worker / executor
+x-tracecat-env: &tracecat-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  TRACECAT__APP_ENV: production
+  TRACECAT__DB_ENCRYPTION_KEY: ${TRACECAT__DB_ENCRYPTION_KEY}
+  TRACECAT__DB_SSLMODE: ${TRACECAT__DB_SSLMODE:-disable}
+  TRACECAT__DB_URI: ${TRACECAT__DB_URI}
+  TRACECAT__SERVICE_KEY: ${TRACECAT__SERVICE_KEY}
+  TRACECAT__SIGNING_SECRET: ${TRACECAT__SIGNING_SECRET}
+  TRACECAT__API_URL: ${TRACECAT__API_URL:-http://tracecat-api:8000}
+  TRACECAT__PUBLIC_API_URL: ${TRACECAT__PUBLIC_API_URL}
+  TRACECAT__PUBLIC_APP_URL: ${TRACECAT__PUBLIC_APP_URL}
+  TRACECAT__ALLOW_ORIGINS: ${TRACECAT__ALLOW_ORIGINS}
+  TRACECAT__EE_MULTI_TENANT: "false"
+  TRACECAT__RESULT_EXTERNALIZATION_ENABLED: "true"
+  TRACECAT__COLLECTION_MANIFESTS_ENABLED: "true"
+  TRACECAT__DISABLE_NSJAIL: "true"
+  TEMPORAL__CLUSTER_URL: ${TEMPORAL__CLUSTER_URL:-tracecat-temporal:7233}
+  TEMPORAL__CLUSTER_NAMESPACE: ${TEMPORAL__CLUSTER_NAMESPACE:-default}
+  TEMPORAL__CLUSTER_QUEUE: ${TEMPORAL__CLUSTER_QUEUE:-workflow}
+  REDIS_URL: ${REDIS_URL:-redis://tracecat-redis:6379}
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  TRACECAT__BLOB_STORAGE_ENDPOINT: http://tracecat-minio:9000
+  TRACECAT__BLOB_STORAGE_PRESIGNED_URL_ENDPOINT: ${TRACECAT__PUBLIC_APP_URL}/s3
+  TRACECAT__BLOB_STORAGE_BUCKET_WORKFLOW: tracecat-workflow
+  TRACECAT__BLOB_STORAGE_BUCKET_ATTACHMENTS: tracecat-attachments
+  TRACECAT__BLOB_STORAGE_BUCKET_REGISTRY: tracecat-registry
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+
+networks:
+  tracecat_core:
+    driver: bridge
+
+  tracecat_db:
+    driver: bridge
+    internal: true
+
+  tracecat_temporal:
+    driver: bridge
+
+  tracecat_temporal_db:
+    driver: bridge
+    internal: true
+
+  # The main lab network — api/worker/executor join this so playbook
+  # actions can reach Elasticsearch (172.20.0.10) and Kibana (172.20.0.11).
+  hunt_net:
+    external: true
+    name: docker_hunt_net
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+
+volumes:
+  tracecat_db_data:
+  tracecat_temporal_db_data:
+  tracecat_minio_data:
+  tracecat_redis_data:
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Reverse proxy ───────────────────────────────────────────────────────────
+  # Routes :8089 → api:8000 (/api/*), minio:9000 (/s3/*), ui:3000 (catch-all).
+  tracecat-caddy:
+    image: caddy:2.10.2-alpine
+    container_name: tracecat-caddy
+    restart: unless-stopped
+    networks:
+      - tracecat_core
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./config/tracecat/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - tracecat-api
+      - tracecat-ui
+
+  # ── Tracecat database ────────────────────────────────────────────────────────
+  tracecat-postgres:
+    image: postgres:16
+    container_name: tracecat-postgres
+    restart: unless-stopped
+    networks:
+      - tracecat_db
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: ${TRACECAT__POSTGRES_USER:-tracecat}
+      POSTGRES_PASSWORD: ${TRACECAT__POSTGRES_PASSWORD}
+    volumes:
+      - tracecat_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TRACECAT__POSTGRES_USER:-tracecat} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  # ── Temporal database ────────────────────────────────────────────────────────
+  tracecat-temporal-postgres:
+    image: postgres:13
+    container_name: tracecat-temporal-postgres
+    restart: unless-stopped
+    networks:
+      - tracecat_temporal_db
+    environment:
+      POSTGRES_USER: ${TEMPORAL__POSTGRES_USER:-temporal}
+      POSTGRES_PASSWORD: ${TEMPORAL__POSTGRES_PASSWORD}
+    volumes:
+      - tracecat_temporal_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEMPORAL__POSTGRES_USER:-temporal} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  # ── Temporal workflow engine ─────────────────────────────────────────────────
+  tracecat-temporal:
+    image: temporalio/auto-setup:${TEMPORAL__VERSION:-1.27.1}
+    container_name: tracecat-temporal
+    restart: unless-stopped
+    networks:
+      - tracecat_core
+      - tracecat_temporal
+      - tracecat_temporal_db
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=${TEMPORAL__POSTGRES_USER:-temporal}
+      - POSTGRES_PWD=${TEMPORAL__POSTGRES_PASSWORD}
+      - POSTGRES_SEEDS=tracecat-temporal-postgres
+      - LOG_LEVEL=warn
+      - BIND_ON_IP=0.0.0.0
+      - TEMPORAL_BROADCAST_ADDRESS=127.0.0.1
+    depends_on:
+      tracecat-temporal-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "localhost:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  # ── Redis (workflow queue) ───────────────────────────────────────────────────
+  tracecat-redis:
+    image: redis:7-alpine
+    container_name: tracecat-redis
+    restart: unless-stopped
+    networks:
+      - tracecat_core
+    volumes:
+      - tracecat_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO (blob / artifact storage) ─────────────────────────────────────────
+  tracecat-minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: tracecat-minio
+    restart: unless-stopped
+    networks:
+      - tracecat_core
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - tracecat_minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Database migrations (one-shot) ───────────────────────────────────────────
+  tracecat-migrations:
+    <<: *tracecat-image
+    container_name: tracecat-migrations
+    restart: "no"
+    networks:
+      - tracecat_core
+      - tracecat_db
+    environment:
+      <<: *tracecat-env
+    command: ["python3", "-m", "alembic", "upgrade", "head"]
+    depends_on:
+      tracecat-postgres:
+        condition: service_healthy
+
+  # ── API server ───────────────────────────────────────────────────────────────
+  # Also on hunt_net so webhook triggers from Kibana can reach the API
+  # from within the Docker network, and so playbook HTTP actions can call
+  # the Elasticsearch / Kibana APIs directly.
+  tracecat-api:
+    <<: *tracecat-image
+    container_name: tracecat-api
+    networks:
+      - tracecat_core
+      - tracecat_db
+      - hunt_net
+    environment:
+      <<: *tracecat-env
+      TRACECAT__AUTH_TYPES: ${TRACECAT__AUTH_TYPES:-basic}
+      TRACECAT__AUTH_SUPERADMIN_EMAIL: ${TRACECAT__AUTH_SUPERADMIN_EMAIL}
+      TRACECAT__AUTH_ALLOWED_DOMAINS: ${TRACECAT__AUTH_ALLOWED_DOMAINS:-}
+      TRACECAT__AUTH_MIN_PASSWORD_LENGTH: "8"
+      USER_AUTH_SECRET: ${USER_AUTH_SECRET}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      tracecat-migrations:
+        condition: service_completed_successfully
+      tracecat-temporal:
+        condition: service_healthy
+      tracecat-minio:
+        condition: service_healthy
+      tracecat-redis:
+        condition: service_healthy
+
+  # ── Workflow worker ───────────────────────────────────────────────────────────
+  # hunt_net access lets workflow steps call Elasticsearch / Kibana APIs.
+  tracecat-worker:
+    <<: *tracecat-image
+    container_name: tracecat-worker
+    networks:
+      - tracecat_core
+      - tracecat_db
+      - tracecat_temporal
+      - hunt_net
+    environment:
+      <<: *tracecat-env
+    command: ["python", "-m", "tracecat.dsl.worker"]
+    depends_on:
+      tracecat-migrations:
+        condition: service_completed_successfully
+      tracecat-api:
+        condition: service_started
+      tracecat-temporal:
+        condition: service_healthy
+      tracecat-redis:
+        condition: service_healthy
+      tracecat-minio:
+        condition: service_healthy
+
+  # ── Action executor ───────────────────────────────────────────────────────────
+  # hunt_net access lets HTTP actions reach Elasticsearch / Caldera / LocalStack.
+  tracecat-executor:
+    <<: *tracecat-image
+    container_name: tracecat-executor
+    networks:
+      - tracecat_core
+      - tracecat_db
+      - tracecat_temporal
+      - hunt_net
+    environment:
+      <<: *tracecat-env
+      TRACECAT__EXECUTOR_BACKEND: direct
+    command: ["python", "-m", "tracecat.executor.worker"]
+    depends_on:
+      tracecat-migrations:
+        condition: service_completed_successfully
+      tracecat-temporal:
+        condition: service_healthy
+      tracecat-redis:
+        condition: service_healthy
+      tracecat-minio:
+        condition: service_healthy
+
+  # ── Frontend UI ───────────────────────────────────────────────────────────────
+  tracecat-ui:
+    image: ghcr.io/tracecathq/tracecat-ui:${TRACECAT__IMAGE_TAG:-1.0.0-beta.47}
+    container_name: tracecat-ui
+    restart: unless-stopped
+    networks:
+      - tracecat_core
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: production
+      NEXT_PUBLIC_API_URL: ${TRACECAT__PUBLIC_API_URL}
+      NEXT_PUBLIC_APP_URL: ${TRACECAT__PUBLIC_APP_URL}
+      NEXT_PUBLIC_AUTH_TYPES: ${TRACECAT__AUTH_TYPES:-basic}
+      NEXT_SERVER_API_URL: ${TRACECAT__API_URL:-http://tracecat-api:8000}
+      TRACECAT__SERVICE_KEY: ${TRACECAT__SERVICE_KEY}
+    depends_on:
+      - tracecat-api

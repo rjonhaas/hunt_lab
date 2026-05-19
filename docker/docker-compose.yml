@@ -166,7 +166,10 @@ services:
 
   # ── MITRE Caldera ───────────────────────────────────────────────────────────
   caldera:
-    image: ghcr.io/mitre/caldera:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.caldera
+    image: hunt-lab/caldera:local
     container_name: caldera
     restart: unless-stopped
     ports:

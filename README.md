@@ -69,15 +69,31 @@ seeded automatically.
 | `cloudtrail-gen` | —         | Tails LocalStack request logs and emits a CloudTrail event per real API call |
 | `bootstrap`      | —         | One-shot init (writes Fleet token, seeds Caldera abilities, creates S3 bucket) |
 
+**Optional SOAR overlay** (`docker-compose.tracecat.yml` — see [SOAR / Tracecat](#soar--tracecat-optional)):
+
+| Container               | Port | Role                                        |
+|-------------------------|------|---------------------------------------------|
+| `tracecat-caddy`        | 8089 | Reverse proxy for Tracecat UI + API         |
+| `tracecat-api`          | —    | Tracecat REST API + webhook receiver        |
+| `tracecat-worker`       | —    | Temporal workflow worker                    |
+| `tracecat-executor`     | —    | Action executor (HTTP, scripts, integrations) |
+| `tracecat-ui`           | —    | Next.js SOAR frontend                       |
+| `tracecat-temporal`     | —    | Temporal workflow engine                    |
+| `tracecat-postgres`     | —    | Tracecat application database               |
+| `tracecat-temporal-postgres` | — | Temporal history database              |
+| `tracecat-redis`        | —    | Workflow queue / cache                      |
+| `tracecat-minio`        | —    | Artifact / blob storage                     |
+| `tracecat-migrations`   | —    | One-shot DB schema migration                |
+
 ---
 
 ## Host requirements
 
-| Resource | Minimum   | Recommended |
-|----------|-----------|-------------|
-| RAM      | 24 GB     | 32 GB       |
-| CPU      | 6 cores   | 8+ cores    |
-| Disk     | 150 GB    | 250 GB      |
+| Resource | Minimum   | Recommended | With Tracecat overlay |
+|----------|-----------|-------------|----------------------|
+| RAM      | 24 GB     | 32 GB       | 32 GB minimum         |
+| CPU      | 6 cores   | 8+ cores    | 8+ cores              |
+| Disk     | 150 GB    | 250 GB      | +10 GB                |
 | OS       | Windows 10/11 or Linux | — |
 
 **Required software (install manually before running setup):**
@@ -143,6 +159,7 @@ If a step fails, re-run only that VM: `vagrant up <name> --provision`.
 | Fleet Server      | http://192.168.56.10:8220  | internal — used by Elastic Agent          |
 | LocalStack API    | http://192.168.56.10:4566  | local test credentials (`test` / `test`)  |
 | Elasticsearch API | http://192.168.56.10:9200  | same as Kibana                            |
+| Tracecat (SOAR)   | http://192.168.56.10:8089  | email set in `.env.tracecat` / password on first login (optional overlay) |
 | `win-dc` (RDP)    | 192.168.56.50              | `LAB\vagrant` / `vagrant`                 |
 | `win-server` (RDP)| 192.168.56.51              | `LAB\vagrant` / `vagrant`                 |
 | `win11-victim` (RDP) | 192.168.56.20           | `LAB\vagrant` / `vagrant`                 |
@@ -275,6 +292,68 @@ event.dataset : "aws.cloudtrail" and cloud.service.name : "s3.amazonaws.com"
 
 ---
 
+## SOAR / Tracecat (optional)
+
+Tracecat is a self-hosted SOAR platform (think open-source Tines) that closes
+the detection-to-response loop: Kibana fires a webhook when a detection rule
+hits, Tracecat receives it and executes a playbook.
+
+### What it adds
+
+- **Webhook receiver** — Kibana Connector → Webhook → `http://192.168.56.10:8089/api/webhooks/<id>`
+- **Automated enrichment** — playbook steps can query Elasticsearch for full
+  process trees, pull Caldera operation status, and call LocalStack IAM APIs
+  directly (api/worker/executor containers share `hunt_net`).
+- **Case management** — each triggered playbook creates a case pre-populated
+  with alert context.
+- **Scenario playbooks** (build after standing up the overlay):
+  - *RansomHub*: S3 exfil alert → pull bucket objects from LocalStack → build
+    incident timeline.
+  - *Identity Chain*: Kerberoasting alert → correlate 4769 + DCSync events →
+    assemble attack chain.
+
+### Setup
+
+```bash
+# On docker-host, from /vagrant/docker:
+cp .env.tracecat.example .env.tracecat
+
+# Generate the four required secrets (run each command, paste output into .env.tracecat):
+openssl rand -hex 32   # → TRACECAT__SERVICE_KEY
+openssl rand -hex 32   # → TRACECAT__SIGNING_SECRET
+openssl rand -hex 32   # → USER_AUTH_SECRET
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+                       # → TRACECAT__DB_ENCRYPTION_KEY
+
+# Set your superadmin email, then start the overlay:
+docker compose -f docker-compose.tracecat.yml --env-file .env.tracecat up -d
+
+# Watch startup (Temporal takes ~30 s to initialize):
+docker compose -f docker-compose.tracecat.yml --env-file .env.tracecat logs -f
+```
+
+Once healthy, open `http://192.168.56.10:8089`, sign in with the superadmin
+email and a password of your choice (set on first login), and create your first
+workflow.
+
+### Connecting Kibana alerts to Tracecat
+
+1. In Kibana → **Stack Management → Connectors → Create connector → Webhook**.
+2. URL: `http://172.20.0.1:8089/api/webhooks/<tracecat-workflow-id>`  
+   *(use the Docker bridge gateway IP `172.20.0.1` — Kibana is on `hunt_net`
+   and Tracecat-caddy is exposed on the host; alternatively use the host's
+   LAN IP `192.168.56.10:8089` if routing allows)*.
+3. Edit a detection rule → **Actions → On each alert → your webhook connector**.
+
+### Resource note
+
+The overlay adds ~8 GB RAM at idle (Temporal + two Postgres instances + Redis +
+MinIO + API/worker/executor). Ensure the `docker-host` VM has at least **20 GB
+RAM** assigned (Vagrantfile default is 12 GB — increase `v.memory` in the
+`docker-host` block before provisioning if you plan to run Tracecat).
+
+---
+
 ## Project structure
 
 ```
@@ -284,15 +363,18 @@ hunt_lab/
 ├── Vagrantfile                               # Defines the 4 lab VMs
 ├── docker/
 │   ├── docker-compose.yml                    # SIEM + C2 + LocalStack stack
+│   ├── docker-compose.tracecat.yml           # Optional SOAR overlay (Tracecat)
 │   ├── setup.sh                              # Runs inside docker-host
 │   ├── .env.example                          # Copy to .env (HOST_IP, passwords)
+│   ├── .env.tracecat.example                 # Copy to .env.tracecat (Tracecat secrets)
 │   ├── bootstrap/
 │   │   ├── bootstrap.sh                      # One-shot init (Fleet, Caldera, S3)
 │   │   └── generate_cloudtrail_activity.sh   # Synthetic AWS event emitter
 │   ├── cloudtrail/                           # Filebeat input directory
 │   └── config/
 │       ├── caldera/local.yml                 # Caldera config (HOST_IP injected)
-│       └── filebeat/filebeat.yml             # Ships CloudTrail logs to ES
+│       ├── filebeat/filebeat.yml             # Ships CloudTrail logs to ES
+│       └── tracecat/Caddyfile                # Caddy reverse proxy for Tracecat
 ├── kibana/
 │   ├── hunt_report_template.ndjson           # Saved-objects export
 │   ├── create_all_objects.py                 # Programmatic object creation

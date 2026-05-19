@@ -1,0 +1,24 @@
+# Caddyfile — reverse proxy for Tracecat (port 8089)
+#
+# Routes:
+#   /api/*  →  tracecat-api:8000   (REST API + webhook endpoints)
+#   /s3/*   →  tracecat-minio:9000  (presigned artifact URLs, /s3 prefix stripped)
+#   /*      →  tracecat-ui:3000    (Next.js frontend)
+
+:8089 {
+    # API — strip /api prefix before forwarding
+    handle /api/* {
+        reverse_proxy tracecat-api:8000
+    }
+
+    # MinIO presigned URLs (Tracecat appends /s3 to all presigned links)
+    handle /s3/* {
+        uri strip_prefix /s3
+        reverse_proxy tracecat-minio:9000
+    }
+
+    # Frontend catch-all
+    handle {
+        reverse_proxy tracecat-ui:3000
+    }
+}

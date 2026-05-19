@@ -1,0 +1,4 @@
+FROM ghcr.io/mitre/caldera:latest
+
+# EMU plugin ships in the base image; ensure its Python deps are installed
+RUN pip install --no-cache-dir -r /usr/src/app/plugins/emu/requirements.txt
