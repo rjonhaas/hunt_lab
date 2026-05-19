@@ -1,10 +1,12 @@
-# Hunt Lab — Elastic SIEM + MITRE Caldera + Active Directory + LocalStack
+# Hunt Lab — Elastic SIEM + MITRE Caldera + Active Directory + LocalStack + Tracecat SOAR
 
 A self-contained threat hunting lab. One Linux VM runs the SIEM stack, C2
-framework, and a simulated AWS environment as Docker containers; three Windows
-VMs (`win-dc`, `win-server`, `win11-victim`) form an Active Directory domain
-preloaded with Sysmon, Elastic Agent, MITRE Caldera sandcat, and Atomic Red
-Team — ready to hunt as soon as `vagrant up` finishes.
+framework, and a simulated AWS environment as Docker containers; an optional
+TraceCat SOAR overlay closes the detection-to-response loop via Kibana webhooks
+and automated playbooks. Three Windows VMs (`win-dc`, `win-server`,
+`win11-victim`) form an Active Directory domain preloaded with Sysmon, Elastic
+Agent, MITRE Caldera sandcat, and Atomic Red Team — ready to hunt as soon as
+`vagrant up` finishes.
 
 The lab also ships with two fully wired-up Caldera scenarios that exercise
 complementary detection surfaces:
@@ -30,6 +32,7 @@ seeded automatically.
 │  │  ─────────────────────────────────────────────────────────────   │   │
 │  │  Elasticsearch  Kibana  Fleet Server  Caldera  LocalStack        │   │
 │  │  Filebeat       CloudTrail-gen        bootstrap (one-shot)       │   │
+│  │  Tracecat (optional SOAR overlay — see docker-compose.tracecat)  │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 │         ▲                  ▲                  ▲                         │
 │         │ Fleet            │ sandcat C2       │ S3 exfil target         │
