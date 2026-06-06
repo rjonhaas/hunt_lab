@@ -19,6 +19,7 @@
 #   :9200 / :5601 / :8220  — Elasticsearch + Kibana + Fleet Server
 #   :8888                  — MITRE Caldera C2
 #   :4566                  — LocalStack
+#   :8889 / :8000          — Velociraptor GUI / client comms (DFIR)
 #
 # Provisioning order:
 #   1. docker-host    — installs Docker, runs docker/setup.sh inside the VM,
@@ -161,6 +162,11 @@ Vagrant.configure("2") do |config|
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
     POWERSHELL
 
+    # Install Velociraptor client (repacked w/ embedded server config) as a service
+    dc.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
+      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+    POWERSHELL
+
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     dc.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
@@ -226,6 +232,11 @@ Vagrant.configure("2") do |config|
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
     POWERSHELL
 
+    # Install Velociraptor client (repacked w/ embedded server config) as a service
+    srv.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
+      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+    POWERSHELL
+
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     srv.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
@@ -281,6 +292,11 @@ Vagrant.configure("2") do |config|
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
       powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+    POWERSHELL
+
+    # Install Velociraptor client (repacked w/ embedded server config) as a service
+    win.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
+      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
     POWERSHELL
 
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)

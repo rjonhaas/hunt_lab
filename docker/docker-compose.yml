@@ -26,6 +26,7 @@ volumes:
   kibana_data:
   caldera_data:
   localstack_data:
+  velociraptor_data:
 
 services:
 
@@ -280,3 +281,38 @@ services:
     command: ["filebeat", "-e", "--strict.perms=false"]
     networks:
       - hunt_net
+
+  # ── Velociraptor (DFIR endpoint visibility) ──────────────────────────────────
+  # Single-node Velociraptor server (weslambert/velociraptor-docker image).
+  # On first start it generates server.config.yaml, creates the admin user from
+  # VELOX_USER/VELOX_PASSWORD, and repacks platform clients — each with the
+  # server config embedded — into ./velociraptor/clients/.
+  #
+  # The Windows VMs install velociraptor_client_repacked.exe as a service so they
+  # auto-enroll as agents pointing at https://HOST_IP:8000/.
+  #
+  # NOTE: the datastore uses a NAMED volume, not a bind mount under /vagrant —
+  # Docker can't chown a bind-mount source on the VMware HGFS shared folder
+  # ("operation not permitted"). setup.sh instead `docker cp`s the repacked
+  # Windows client out to docker/velociraptor/clients/windows/ on the synced
+  # folder, where the Windows VMs read it as
+  # C:\vagrant\docker\velociraptor\clients\windows\ (scripts/install_velociraptor_client.ps1).
+  velociraptor:
+    image: wlambert/velociraptor
+    container_name: velociraptor
+    restart: unless-stopped
+    environment:
+      - VELOX_USER=${VELOX_USER:-admin}
+      - VELOX_PASSWORD=${VELOX_PASSWORD:?VELOX_PASSWORD is required}
+      - VELOX_ROLE=${VELOX_ROLE:-administrator}
+      - VELOX_SERVER_URL=https://${HOST_IP}:8000/
+      - VELOX_FRONTEND_HOSTNAME=${HOST_IP}
+    ports:
+      - "8000:8000"   # client comms
+      - "8001:8001"   # gRPC API
+      - "8889:8889"   # Web GUI (https)
+    volumes:
+      - velociraptor_data:/velociraptor
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.50

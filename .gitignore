@@ -1,1 +1,16 @@
+# Vagrant machine state
+.vagrant/
 
+# Local docker env — contains passwords and the Fleet service token
+docker/.env
+
+# Generated at provisioning time (secrets / host-specific)
+elastic-credentials.txt
+fleet-enrollment-token.txt
+domain-info.txt
+
+# Runtime data written by containers / staged clients
+docker/cloudtrail/
+# Velociraptor server datastore, generated configs, and repacked clients
+# (named volume + docker cp staging from docker/docker-compose.yml)
+docker/velociraptor/

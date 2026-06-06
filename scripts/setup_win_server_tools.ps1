@@ -86,7 +86,8 @@ $AgentVersion = "8.19.14"   # Must match ELASTIC_VERSION in docker/.env
 $AgentZip     = "$AgentDir\elastic-agent.zip"
 $AgentUrl     = "https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-${AgentVersion}-windows-x86_64.zip"
 
-& curl.exe -fsSL -o $AgentZip $AgentUrl 2>$null
+# --retry handles transient TLS drops (curl 56: schannel close_notify) on the large download
+& curl.exe -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o $AgentZip $AgentUrl 2>$null
 if ($LASTEXITCODE -ne 0) { Write-Error "Failed to download Elastic Agent (exit $LASTEXITCODE)"; exit 1 }
 
 Write-Log "Extracting Elastic Agent..."

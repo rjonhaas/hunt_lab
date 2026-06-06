@@ -128,7 +128,8 @@ $AgentUrl     = "https://artifacts.elastic.co/downloads/beats/elastic-agent/elas
 
 # Use curl.exe (native Win10/11) — Invoke-WebRequest drops on large files over WinRM
 Write-Log "Fetching: $AgentUrl"
-& curl.exe -fsSL -o $AgentZip $AgentUrl 2>$null
+# --retry handles transient TLS drops (curl 56: schannel close_notify) on the large download
+& curl.exe -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o $AgentZip $AgentUrl 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Error "curl.exe failed to download Elastic Agent (exit $LASTEXITCODE)"
     exit 1

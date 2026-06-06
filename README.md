@@ -68,6 +68,7 @@ seeded automatically.
 | `fleet-server`   | 8220      | Elastic Agent management                      |
 | `caldera`        | 8888      | MITRE Caldera 5.x (C2 / adversary emulation)  |
 | `localstack`     | 4566      | Simulated AWS (S3, IAM, CloudTrail, Lambda…)  |
+| `velociraptor`   | 8889/8000 | DFIR endpoint visibility (GUI / client comms) |
 | `filebeat`       | —         | Ships CloudTrail JSON to Elasticsearch        |
 | `cloudtrail-gen` | —         | Tails LocalStack request logs and emits a CloudTrail event per real API call |
 | `bootstrap`      | —         | One-shot init (writes Fleet token, seeds Caldera abilities, creates S3 bucket) |
@@ -159,6 +160,7 @@ If a step fails, re-run only that VM: `vagrant up <name> --provision`.
 |-------------------|----------------------------|-------------------------------------------|
 | Kibana (SIEM)     | http://192.168.56.10:5601  | `elastic` / see `elastic-credentials.txt` |
 | Caldera (C2)      | http://192.168.56.10:8888  | `admin` / `HuntLab2026!`                  |
+| Velociraptor (DFIR)| https://192.168.56.10:8889 | `admin` / `HuntLab2026!` (set in `docker/.env`, self-signed TLS) |
 | Fleet Server      | http://192.168.56.10:8220  | internal — used by Elastic Agent          |
 | LocalStack API    | http://192.168.56.10:4566  | local test credentials (`test` / `test`)  |
 | Elasticsearch API | http://192.168.56.10:9200  | same as Kibana                            |
