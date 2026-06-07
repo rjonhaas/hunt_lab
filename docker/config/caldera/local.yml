@@ -21,9 +21,10 @@ plugins:
   - stockpile
   - training
 
-# app.contact.http is the URL agents beacon back to (must be the host LAN IP)
-# app.contact.tcp/udp/websocket are bind addresses inside the container
-app.contact.http: http://192.168.56.10:8888
+# app.contact.http is the URL agents beacon back to (must be the host LAN IP).
+# HOST_IP_PLACEHOLDER is substituted at lab bring-up by docker/bootstrap/bootstrap.sh.
+# app.contact.tcp/udp/websocket are bind addresses inside the container.
+app.contact.http: http://HOST_IP_PLACEHOLDER:8888
 app.contact.dns.domain: caldera.lab
 app.contact.tcp: 0.0.0.0:7010
 app.contact.udp: 0.0.0.0:7011

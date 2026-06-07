@@ -35,6 +35,18 @@ API_KEY = os.environ.get("CALDERA_API_KEY", "ADMIN123")
 SCHEMA_VERSION = "1.0"
 OUTPUT_PREVIEW_CHARS = 2000
 
+# Sandcat reports every NIC's IP; on the hunt_lab VMs that means each VM's
+# host-only IP AND a NAT IP from the host's real LAN. The NAT IPs don't matter
+# for the benchmark and shouldn't ship in a public ground_truth.json.
+# Default matches the lab's host-only network in Vagrantfile.
+LAB_SUBNET_PREFIX = os.environ.get("HUNT_LAB_SUBNET_PREFIX", "192.168.56.")
+
+
+def filter_lab_ips(ips):
+    """Keep only IPs on the lab's host-only subnet; everything else is noise
+    from the VM's secondary NIC on the host's home/work network."""
+    return [ip for ip in (ips or []) if ip.startswith(LAB_SUBNET_PREFIX)]
+
 
 def api_get(path):
     req = urllib.request.Request(CALDERA + path, method="GET")
@@ -106,7 +118,7 @@ def build_manifest(op, op_links):
         hosts.append({
             "hostname": agent.get("host"),
             "platform": agent.get("platform"),
-            "ip_addresses": agent.get("host_ip_addrs") or [],
+            "ip_addresses": filter_lab_ips(agent.get("host_ip_addrs")),
             "agent_paw": agent.get("paw"),
             "agent_username": agent.get("username"),
             "agent_privilege": agent.get("privilege"),

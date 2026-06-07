@@ -21,9 +21,14 @@ param(
 $ErrorActionPreference = "Continue"
 
 if (-not (Test-Path $Target)) {
+    # Exit non-zero so Caldera records this link as failed (status != 0).
+    # Without that, the ground-truth manifest reports T1486 fired successfully
+    # on every host in the operation group, even though the decoy share only
+    # exists on win-server and no rename / note-drop actually happened on the
+    # other hosts.
     Write-Host "[fake-amd64] target $Target not found - nothing to encrypt"
     "no-target" | Out-File -FilePath $Marker -Encoding ascii -Force
-    exit 0
+    exit 2
 }
 
 if (-not (Test-Path $NoteSrc)) {

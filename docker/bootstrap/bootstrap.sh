@@ -360,9 +360,13 @@ chmod 600 "${TOKEN_FILE}"
 log "Fleet enrollment token written to repo root: fleet-enrollment-token.txt"
 
 # ── 8. Seed LocalStack baseline resources ────────────────────────────────────
-# awslocal may not be installed in this container; skip if unavailable.
-if command -v awslocal &>/dev/null || pip show awscli-local &>/dev/null 2>&1; then
-  pip install -q awscli-local 2>/dev/null || true
+# Install awscli-local unconditionally — the bootstrap image is python:3.11-slim
+# and ships with neither awslocal nor awscli-local pre-installed, so the old
+# `if command -v awslocal || pip show awscli-local` guard short-circuited to
+# false on every run and the LocalStack seeding (including the RansomHub
+# exfil destination bucket) was silently skipped.
+pip install -q awscli-local 2>/dev/null || true
+if true; then
   export AWS_ACCESS_KEY_ID=test
   export AWS_SECRET_ACCESS_KEY=test
   export AWS_DEFAULT_REGION=us-east-1

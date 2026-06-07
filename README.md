@@ -288,8 +288,9 @@ itself. Total time end-to-end on a clean clone: roughly 4–6 hours
 ~30 min from "Caldera ready" to "bundle on disk").
 
 ```bash
-# 1. Bring up the lab (skip if already running)
-bash docker/setup.sh
+# 1. Bring up the lab (skip if already running). docker/setup.sh is run
+#    *inside* docker-host by its provisioner — you only invoke `vagrant up`.
+vagrant up docker-host
 vagrant up win-dc win-server win11-victim --no-parallel
 
 # 2. Verify all three sandcat agents are healthy in Caldera group `red`
