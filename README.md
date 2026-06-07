@@ -343,18 +343,38 @@ on the host. To analyze them you'll want to move just the **evidence**
 portion (never the ground truth — that would invalidate your own
 benchmark) onto whatever DFIR workstation you use.
 
-The harness ships with a `--copy-evidence-to <dir>` flag for one-shot
-transfer:
+The harness ships two transfer flags. **Use `--scp-evidence-to` if your
+analysis VM is reachable over SSH** (cleanest, one command, no shared
+folder plumbing); fall back to `--copy-evidence-to` for shared-folder
+setups where SSH isn't an option.
 
 ```bash
-# Default ~/dfir_answers location + copy evidence to a shared/transfer dir:
-python3 scripts/make_benchmark_bundle.py <op_id> --copy-evidence-to ~/Downloads/<op_id>
+# Preferred — scp the evidence/ subtree straight to a SIFT (or any) VM.
+# Uses your ~/.ssh/config and ssh-agent; set up key auth first.
+python3 scripts/make_benchmark_bundle.py <op_id> \
+  --scp-evidence-to sansforensics@192.168.2.149:~/Desktop/cases/<op_id>
+
+# Alternative — drop into a local dir (often a VMware host-only shared
+# folder mounted into the analysis VM).
+python3 scripts/make_benchmark_bundle.py <op_id> \
+  --copy-evidence-to ~/Downloads/<op_id>
 ```
+
+Both flags copy ONLY the `evidence/` subtree — `ground_truth.json` stays
+under `~/dfir_answers/<op_id>/ground_truth/` no matter what. If you want
+to score a tool, the ground-truth file is small enough to copy by hand
+or grab from the GitHub Release.
 
 Three common destination patterns:
 
-- **VMware shared folder into a SIFT (or other Linux) analysis VM.** Add
-  a *read-only* shared folder on the VM pointing at your transfer dir
+- **SSH-reachable analysis VM (recommended for SIFT).** Set up
+  passwordless key auth once, then `--scp-evidence-to` does the
+  end-to-end transfer in one command. Standard SANS SIFT image uses
+  `sansforensics@<sift-ip>`. The flag pre-creates the remote directory
+  via `ssh mkdir -p`, so the destination doesn't need to exist.
+
+- **VMware shared folder into a Linux analysis VM (fallback).** Add a
+  *read-only* shared folder on the VM pointing at your transfer dir
   (e.g. host path `/home/<you>/Downloads`, guest name `case`). The guest
   sees it at `/mnt/hgfs/case/`. Read-only is intentional — it physically
   prevents the analysis VM from writing back into host paths that hold
@@ -362,9 +382,8 @@ Three common destination patterns:
   ```bash
   # On host:
   python3 scripts/make_benchmark_bundle.py <op_id> --copy-evidence-to ~/Downloads/<op_id>
-  # In SIFT:
-  ls /mnt/hgfs/case/<op_id>/
-  cp -r /mnt/hgfs/case/<op_id> ~/cases/   # copy into the VM if you'll modify in place
+  # In the VM:
+  cp -r /mnt/hgfs/case/<op_id> ~/cases/
   ```
 
 - **Local analysis on the same host.** Just extract a tar wherever you
@@ -373,10 +392,6 @@ Three common destination patterns:
   ```bash
   mkdir -p analysis/win-dc && tar xf ~/dfir_answers/<op_id>/evidence/win-dc/C.*.tar -C analysis/win-dc
   ```
-
-- **Different machine.** `scp` or `rsync` the per-host tars
-  (~100 MB each), or `gh release download` against your own private
-  Release if you've published it.
 
 The triage tars come in Velociraptor's on-disk format: paths are
 URL-encoded under `uploads/ntfs/...`. Most DFIR tooling (EvtxECmd,

@@ -211,6 +211,11 @@ def main():
                    help="After the bundle is assembled, copy ONLY the evidence/ "
                         "subtree to this destination (e.g. a VMware shared folder "
                         "to a SIFT analysis VM). Ground truth never goes here.")
+    p.add_argument("--scp-evidence-to", metavar="USER@HOST:DIR",
+                   help="After the bundle is assembled, scp ONLY the evidence/ "
+                        "subtree to USER@HOST:DIR. Uses your existing SSH config "
+                        "(passwordless key auth recommended). Ground truth never "
+                        "goes here. Example: sansforensics@192.168.2.149:~/Desktop/cases/<id>")
     args = p.parse_args()
 
     run_dir = os.path.join(args.out_root, args.op_id)
@@ -303,6 +308,28 @@ def main():
                 shutil.copy2(src, dst)
         print(f"  copied evidence to: {dest}")
 
+    # Step 6 (optional): scp evidence directly to an analysis VM. Same
+    # discipline as --copy-evidence-to: only the evidence/ subtree crosses the
+    # wire. Uses your SSH config — set up key auth before running.
+    if args.scp_evidence_to:
+        dest = args.scp_evidence_to
+        if ":" not in dest:
+            sys.exit(f"--scp-evidence-to expects USER@HOST:DIR, got {dest!r}")
+        user_host, remote_path = dest.split(":", 1)
+        # Pre-create the remote dir so scp doesn't have to guess and so a
+        # missing parent doesn't silently turn into a file copy.
+        mkdir_cmd = f"mkdir -p {remote_path}"
+        rc = subprocess.run(["ssh", user_host, mkdir_cmd]).returncode
+        if rc != 0:
+            sys.exit(f"failed to mkdir {remote_path} on {user_host} (rc={rc})")
+        sources = sorted(os.path.join(ev_dir, e) for e in os.listdir(ev_dir))
+        scp_cmd = ["scp", "-r", *sources, f"{user_host}:{remote_path}/"]
+        print(f"  scp -> {dest} ({len(sources)} entries)")
+        rc = subprocess.run(scp_cmd).returncode
+        if rc != 0:
+            sys.exit(f"scp to {dest} failed (rc={rc})")
+        print(f"  scp'd evidence to: {dest}")
+
     print(f"\nBundle ready: {run_dir}/")
     print(f"  ground_truth.json:  {gt_path}")
     print(f"  evidence/:          {ev_dir}")
@@ -310,6 +337,8 @@ def main():
     print(f"  README.md:          {os.path.join(run_dir, 'README.md')}")
     if args.copy_evidence_to:
         print(f"  evidence copy:      {os.path.expanduser(args.copy_evidence_to)}")
+    if args.scp_evidence_to:
+        print(f"  evidence scp:       {args.scp_evidence_to}")
 
 
 if __name__ == "__main__":
