@@ -221,7 +221,13 @@ def main():
         sys.exit(2)
 
     manifest = build_manifest(op, op_links)
-    out_path = args.output or f"/home/zeus/dfir_answers/{op.get('name', args.op_id)}/ground_truth.json"
+    # Default to op_id (not op_name) so a bare extract lands in the same
+    # directory the bundle script uses — avoids a confusing fork where the
+    # extractor's output and the bundle's output diverge.
+    default_root = os.path.expanduser(
+        os.environ.get("HUNT_LAB_BUNDLES_ROOT", "~/dfir_answers")
+    )
+    out_path = args.output or os.path.join(default_root, args.op_id, "ground_truth.json")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(manifest, f, indent=2, sort_keys=False)

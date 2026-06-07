@@ -237,6 +237,148 @@ README explains why).
 
 ---
 
+## DFIR benchmark bundles — Find Evil with a known answer key
+
+Every Caldera operation that runs in this lab can be turned into a
+distributable DFIR benchmark: a per-host triage collection plus a
+machine-readable **ground-truth manifest** that records exactly which
+ATT&CK techniques fired, on which host, at what time, and with what
+command. Analysts can play "Find Evil" against the triage; tool authors
+can score their findings against the manifest.
+
+There are two ways to use this — pick one based on whether you want to
+run the lab yourself.
+
+### Path A — Just give me a dataset (no lab required)
+
+Skip the lab entirely. Pre-built bundles are published as
+[GitHub Releases](https://github.com/rjonhaas/hunt_lab/releases). Each
+release zip contains the evidence triage (Sysmon EVTX, all Windows event
+logs, registry hives, `$MFT`, `$UsnJrnl`, Prefetch, Amcache, PSReadline,
+browser history, scheduled tasks, Recycle Bin) for every host the
+operation touched, plus a bundle-level `README.md` explaining the
+scenario and the manifest schema.
+
+```bash
+# Replace v1.0-rh-2026-06-06 with the latest release tag
+curl -L -O https://github.com/rjonhaas/hunt_lab/releases/download/v1.0-rh-2026-06-06/evidence_<op_id>.zip
+unzip evidence_<op_id>.zip -d find-evil-rh/
+ls find-evil-rh/        # win-dc/  win-server/  win11-victim/  op_metadata.json  README.md
+```
+
+The `ground_truth.json` manifest is **not** in the public release zip —
+that would invalidate the benchmark for anyone using their tool against
+it. Request it separately if you're scoring tools, or work blind if
+you're playing analyst.
+
+### Path B — Run the lab and generate your own bundle
+
+Use this if you want a fresh run, a different scenario, longer dwell
+times to model real attacker tempo, or to experiment with the harness
+itself. Total time end-to-end on a clean clone: roughly 4–6 hours
+(mostly Windows VM provisioning on first bring-up — subsequent runs are
+~30 min from "Caldera ready" to "bundle on disk").
+
+```bash
+# 1. Bring up the lab (skip if already running)
+bash docker/setup.sh
+vagrant up win-dc win-server win11-victim --no-parallel
+
+# 2. Verify all three sandcat agents are healthy in Caldera group `red`
+curl -sS -H "KEY: ADMIN123" http://192.168.56.10:8888/api/v2/agents \
+  | jq '[.[] | select(.group=="red")] | map({host, trusted, last_seen})'
+
+# 3. Launch a scenario in the Caldera UI (or via API) and note its operation id
+#    UI: http://192.168.56.10:8888  (admin / HuntLab2026!)
+#         Operations → New Operation → Adversary: DFIR-RansomHub-2025-Lab,
+#         Group: red, Auto-run → Start
+#    Op id is in the URL once the op is open, or:
+curl -sS -H "KEY: ADMIN123" http://192.168.56.10:8888/api/v2/operations \
+  | jq 'map({id, name, state})'
+
+# 4. Wait for the op to finish (~26 min for the RansomHub chain at default dwell)
+
+# 5. Generate the benchmark bundle
+python3 scripts/make_benchmark_bundle.py <op_id>
+```
+
+The bundle lands at `~/dfir_answers/<op_id>/`:
+
+```
+~/dfir_answers/<op_id>/
+├── README.md                          # scenario brief + analyst hints + manifest schema
+├── ground_truth/
+│   └── ground_truth.json              # answer key (per-event ts, host, technique, command, status, facts)
+├── evidence/
+│   ├── op_metadata.json               # scenario metadata, no answers — safe to share
+│   ├── velo_collections.json          # which Velo flow_id produced each tar
+│   └── <hostname>/C.<client>_F.<flow>.tar
+└── evidence_<op_id>.zip               # zipped evidence/ — ready to upload to a GitHub Release
+```
+
+Under the hood, three scripts do the work:
+
+| Script                              | What it does                                                     |
+|-------------------------------------|------------------------------------------------------------------|
+| `extract_ground_truth.py <op_id>`   | Pulls Caldera op + op-scoped links, emits normalized manifest.   |
+| `velo_collect.py --all-windows -o…` | Triggers a SANS-style Velo triage on each Windows host.          |
+| `make_benchmark_bundle.py <op_id>`  | Runs both, writes the bundle README, zips the evidence portion.  |
+
+All three honor `CALDERA_URL` / `CALDERA_API_KEY` env overrides and have
+`--help`.
+
+### Getting the evidence onto your analysis VM
+
+After `make_benchmark_bundle.py` finishes you have ~600 MB of triage tars
+on the host. To analyze them you'll want to move just the **evidence**
+portion (never the ground truth — that would invalidate your own
+benchmark) onto whatever DFIR workstation you use.
+
+The harness ships with a `--copy-evidence-to <dir>` flag for one-shot
+transfer:
+
+```bash
+# Default ~/dfir_answers location + copy evidence to a shared/transfer dir:
+python3 scripts/make_benchmark_bundle.py <op_id> --copy-evidence-to ~/Downloads/<op_id>
+```
+
+Three common destination patterns:
+
+- **VMware shared folder into a SIFT (or other Linux) analysis VM.** Add
+  a *read-only* shared folder on the VM pointing at your transfer dir
+  (e.g. host path `/home/<you>/Downloads`, guest name `case`). The guest
+  sees it at `/mnt/hgfs/case/`. Read-only is intentional — it physically
+  prevents the analysis VM from writing back into host paths that hold
+  answer keys.
+  ```bash
+  # On host:
+  python3 scripts/make_benchmark_bundle.py <op_id> --copy-evidence-to ~/Downloads/<op_id>
+  # In SIFT:
+  ls /mnt/hgfs/case/<op_id>/
+  cp -r /mnt/hgfs/case/<op_id> ~/cases/   # copy into the VM if you'll modify in place
+  ```
+
+- **Local analysis on the same host.** Just extract a tar wherever you
+  want and point your DFIR tools at it (URL-encoded paths inside —
+  `%5C` = `\`, `%3A` = `:`):
+  ```bash
+  mkdir -p analysis/win-dc && tar xf ~/dfir_answers/<op_id>/evidence/win-dc/C.*.tar -C analysis/win-dc
+  ```
+
+- **Different machine.** `scp` or `rsync` the per-host tars
+  (~100 MB each), or `gh release download` against your own private
+  Release if you've published it.
+
+The triage tars come in Velociraptor's on-disk format: paths are
+URL-encoded under `uploads/ntfs/...`. Most DFIR tooling (EvtxECmd,
+MFTECmd, RegRipper, Plaso) doesn't care about path shape — point it at
+the relevant files. For a fully rehydrated `C:\Windows\...` layout, use
+Velociraptor's `Windows.KapeFiles.Extract` artifact against the original
+collection (kept in the Velo container's datastore), or unpack and
+rename by hand.
+
+---
+
 ## Threat hunting workflow
 
 1. **Adversary emulation** — pick an operation in Caldera (the RansomHub
