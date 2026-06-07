@@ -14,3 +14,6 @@ docker/cloudtrail/
 # Velociraptor server datastore, generated configs, and repacked clients
 # (named volume + docker cp staging from docker/docker-compose.yml)
 docker/velociraptor/
+
+# Python bytecode from the benchmark harness scripts
+__pycache__/
