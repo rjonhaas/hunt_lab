@@ -35,7 +35,7 @@ What happens during that bring-up:
 
 | Step | Where | Action |
 |---|---|---|
-| `docker/setup.sh` → bootstrap container | docker-host | Creates `s3://ransomhub-exfil-lab` in LocalStack and POSTs the 12 abilities + adversary into Caldera |
+| `docker/setup.sh` → bootstrap container | docker-host | Creates `s3://ransomhub-exfil-lab` in LocalStack and POSTs the 13 attack abilities + 3 dwell abilities + adversary into Caldera |
 | `vagrant up win-server` → `seed_ransomhub_decoy` provisioner | win-server | Stages `C:\Shares\Finance\*.{docx,xlsx,pdf,txt,csv}` and publishes the SMB share |
 | `vagrant up win-{dc,server,11-victim}` → `deploy_caldera_agent` | each Windows VM | Sandcat agents register in group `red` |
 
@@ -57,7 +57,7 @@ Log into Caldera at `http://<docker-host-ip>:8888` (admin / HuntLab2026!) and:
 ## Dwell time
 
 The chain has three sleep abilities baked in so the operation models
-attacker dwell instead of running 12 abilities back-to-back:
+attacker dwell instead of running 13 abilities back-to-back:
 
 | Ability | When | Default | Env var | What real cases look like |
 |---|---|---|---|---|
@@ -76,8 +76,14 @@ RH_DWELL_FOOTHOLD=14400 RH_DWELL_CREDS=28800 RH_DWELL_IMPACT=86400 \
 
 (That's 4h / 8h / 24h — a typical end-to-end dwell of ~36 hours.)
 
-The chain runs all 12 abilities in order. Total runtime ~10 minutes
-end-to-end on the lab hardware.
+The chain runs all 13 attack abilities in order. Total runtime ≈ 25-30
+minutes end-to-end on the lab hardware at default dwell. The long pole
+is `rh-02-recon-network` — a serial PowerShell ping sweep of the /24
+that takes 8-10 minutes per host because `Test-Connection` has a 2-4s
+timeout per unreachable IP and there are ~250 of them. Add `RH_DWELL_*`
+seconds to that for the modelled attacker idle. Earlier docs claimed
+"~10 minutes"; that was the optimistic-everything-quick-and-cached
+estimate, not what an end-to-end run looks like in practice.
 
 ## What to look for in Kibana
 
