@@ -256,9 +256,10 @@ def main():
             "This file is analyst-safe: it gives you the time window and "
             "the hosts in scope so you can narrow your search, without "
             "revealing what attack was run. Scenario name, ATT&CK technique "
-            "list, and per-event ground truth live in the ground_truth/ "
-            "directory of the bundle, which is NOT shipped in the evidence "
-            "zip — request it separately if you're scoring tools."
+            "list, and per-event ground truth live in ground_truth.json, "
+            "shipped as a SEPARATE asset alongside the evidence zip (so "
+            "downloading the zip alone keeps you blind). Tool authors who "
+            "want to score should download both."
         ),
     }
     with open(os.path.join(ev_dir, "op_metadata.json"), "w") as f:

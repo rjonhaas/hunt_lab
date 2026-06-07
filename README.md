@@ -253,23 +253,31 @@ run the lab yourself.
 
 Skip the lab entirely. Pre-built bundles are published as
 [GitHub Releases](https://github.com/rjonhaas/hunt_lab/releases). Each
-release zip contains the evidence triage (Sysmon EVTX, all Windows event
-logs, registry hives, `$MFT`, `$UsnJrnl`, Prefetch, Amcache, PSReadline,
-browser history, scheduled tasks, Recycle Bin) for every host the
-operation touched, plus a bundle-level `README.md` explaining the
-scenario and the manifest schema.
+release has **two assets**:
+
+- `evidence_<op_id>.zip` — Sysmon EVTX, all Windows event logs, registry
+  hives, `$MFT`, `$UsnJrnl`, Prefetch, Amcache, PSReadline, browser
+  history, scheduled tasks, Recycle Bin, for every host the operation
+  touched. Plus an analyst-safe `op_metadata.json` (time window and host
+  list — no scenario name, no technique list).
+- `ground_truth_<op_id>.json` — per-event answer key for the benchmark.
+  Used by scorers; downloading it before doing the analysis spoils the
+  Find Evil challenge.
+
+If you're playing analyst, download only the zip:
 
 ```bash
 # Replace v1.0-rh-2026-06-06 with the latest release tag
 curl -L -O https://github.com/rjonhaas/hunt_lab/releases/download/v1.0-rh-2026-06-06/evidence_<op_id>.zip
 unzip evidence_<op_id>.zip -d find-evil-rh/
-ls find-evil-rh/        # win-dc/  win-server/  win11-victim/  op_metadata.json  README.md
+ls find-evil-rh/        # win-dc/  win-server/  win11-victim/  op_metadata.json
 ```
 
-The `ground_truth.json` manifest is **not** in the public release zip —
-that would invalidate the benchmark for anyone using their tool against
-it. Request it separately if you're scoring tools, or work blind if
-you're playing analyst.
+If you're scoring an AI / DFIR tool, download both — `ground_truth.json`
+is the source of truth for precision/recall. The split is deliberate:
+two separate downloads means "I want to be blind" vs "I want to score"
+is a deliberate choice the participant makes, not something they
+accidentally trip over.
 
 ### Path B — Run the lab and generate your own bundle
 
