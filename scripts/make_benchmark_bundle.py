@@ -228,13 +228,38 @@ def main():
     with open(gt_path) as f:
         manifest = json.load(f)
 
-    # Write op_metadata.json — same data MINUS the events/facts that reveal answers
+    # Write op_metadata.json — analyst-safe metadata only.
+    # Deliberately scrubbed of: scenario name, adversary id, planner name,
+    # technique id list, and events_count. Those reveal the answer to a
+    # Find Evil challenge if an analyst reads them before doing the work.
+    # Everything a scorer needs (scenario, techniques, per-event timeline)
+    # lives in ground_truth/ground_truth.json, which is NOT in the evidence
+    # zip and is delivered to scorers through a separate channel.
+    safe_hosts = [
+        {
+            "hostname": h.get("hostname"),
+            "platform": h.get("platform"),
+            "ip_addresses": h.get("ip_addresses") or [],
+        }
+        for h in manifest["hosts"]
+    ]
     op_meta = {
         "schema_version": manifest["schema_version"],
-        "run": manifest["run"],
-        "hosts": manifest["hosts"],
-        "techniques_summary_keys": sorted(manifest["techniques_summary"].keys()),
-        "events_count": len(manifest["events"]),
+        "run": {
+            "run_id": manifest["run"]["run_id"],
+            "state": manifest["run"]["state"],
+            "started_utc": manifest["run"]["started_utc"],
+            "finished_utc": manifest["run"]["finished_utc"],
+        },
+        "hosts": safe_hosts,
+        "note": (
+            "This file is analyst-safe: it gives you the time window and "
+            "the hosts in scope so you can narrow your search, without "
+            "revealing what attack was run. Scenario name, ATT&CK technique "
+            "list, and per-event ground truth live in the ground_truth/ "
+            "directory of the bundle, which is NOT shipped in the evidence "
+            "zip — request it separately if you're scoring tools."
+        ),
     }
     with open(os.path.join(ev_dir, "op_metadata.json"), "w") as f:
         json.dump(op_meta, f, indent=2)
