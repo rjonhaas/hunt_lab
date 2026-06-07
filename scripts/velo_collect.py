@@ -133,32 +133,30 @@ def velo_query(vql, fmt="jsonl"):
 
 
 def resolve_clients():
-    """Read snapshot.json from the container and map hostnames -> client_ids.
-    The `info` field is hex-encoded protobuf; hostnames are embedded as ASCII
-    literals we can pull out with a regex over the hex-decoded bytes."""
-    rc, out, err = vagrant_exec("cat /velociraptor/client_info/snapshot.json")
-    if rc != 0:
-        sys.exit(f"failed to read snapshot.json: {err}")
+    """Map hostnames -> client_ids by querying Velo's clients() VQL.
+
+    Earlier this script parsed /velociraptor/client_info/snapshot.json's
+    hex-encoded protobuf with a regex that picked the first non-dotted
+    ASCII token. That happened to work for hostnames like 'win-dc' /
+    'win-server' / 'win11-victim' on this lab, but tokens like
+    'Velociraptor' / 'amd64' / 'administrator' would match first on a
+    different setup and silently map the wrong hostname to a client_id.
+
+    clients() under the gRPC API config returns hostname directly. (Under
+    the server-config subprocess path it returns empty rows because that
+    path can't see the running server's in-memory client list — same
+    reason collect_client() comes back null.)"""
+    rows, raw = velo_query(
+        "SELECT client_id, os_info.hostname AS hostname FROM clients()"
+    )
+    if rows is None or not rows:
+        sys.exit(f"resolve_clients: clients() returned no rows. raw={raw[:400]}")
     mapping = {}
-    for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        rec = json.loads(line)
-        cid = rec.get("client_id")
-        hex_info = rec.get("info", "")
-        try:
-            decoded = bytes.fromhex(hex_info)
-        except ValueError:
-            continue
-        # The hostname appears twice in the protobuf — once short, once FQDN.
-        # Look for ascii strings of length >= 3 made of [A-Za-z0-9._-].
-        hosts = re.findall(rb"[A-Za-z0-9][A-Za-z0-9._-]{2,63}", decoded)
-        for h in hosts:
-            h = h.decode("ascii", errors="ignore").lower()
-            if h and "." not in h and not h.startswith("c."):  # short hostname
-                mapping.setdefault(h, cid)
-                break
+    for row in rows:
+        host = (row.get("hostname") or "").lower()
+        cid = row.get("client_id")
+        if host and cid:
+            mapping[host] = cid
     return mapping
 
 

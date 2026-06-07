@@ -195,9 +195,10 @@ DC safe-mode (DSRM) password: `Vagrant123!`
 
 A faithful recreation of The DFIR Report's
 [*"Hide Your RDP: Password Spray Leads to RansomHub Deployment"*](https://thedfirreport.com/reports/)
-(2025-06). Twelve Caldera abilities + three dwell-time abilities chain through
+(2025-06). Thirteen Caldera abilities + three dwell-time abilities chain through
 recon → credential theft → discovery → defense evasion → exfil-to-S3 →
-shadow-copy delete → benign "encryptor" → log clearing.
+shadow-copy delete → benign "encryptor" → log clearing → cloud-credential
+persistence.
 
 Run it: Caldera → **Operations → New Operation → Adversary
 `DFIR-RansomHub-2025-Lab`, Group `red`, Start**.
@@ -561,8 +562,13 @@ hunt_lab/
     ├── join_domain.ps1                       # win11-victim: domain join
     ├── deploy_caldera_agent.ps1              # Standalone sandcat (re)deploy
     ├── install_atomic_red_team.ps1           # Invoke-AtomicRedTeam + atomics library
+    ├── install_velociraptor_client.ps1       # Installs the repacked Velo client as a service
+    ├── validate_lab.ps1                      # Post-provision smoke test
     ├── caldera_ransomhub_setup.py            # Pushes RansomHub abilities/adversary
     ├── caldera_identity_setup.py             # Pushes Identity-Chain abilities/adversary
+    ├── extract_ground_truth.py               # Caldera op → ground_truth.json manifest
+    ├── velo_collect.py                       # Drives Velo SANS-style triage on Windows hosts
+    ├── make_benchmark_bundle.py              # Orchestrates extract + triage → distributable bundle
     └── scenarios/
         ├── ransomhub/                        # DFIR-RansomHub-2025-Lab assets
         │   ├── README.md
