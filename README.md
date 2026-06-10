@@ -8,16 +8,21 @@ and automated playbooks. Three Windows VMs (`win-dc`, `win-server`,
 Agent, MITRE Caldera sandcat, and Atomic Red Team — ready to hunt as soon as
 `vagrant up` finishes.
 
-The lab also ships with two fully wired-up Caldera scenarios that exercise
+The lab also ships with three fully wired-up Caldera scenarios that exercise
 complementary detection surfaces:
 
 - **DFIR-RansomHub-2025-Lab** — recreation of The DFIR Report's June 2025
   RansomHub case (endpoint-heavy: process / file / DNS / S3 exfil).
 - **Identity-Chain-2025-Lab** — Kerberoasting → DCSync → Golden Ticket →
   Pass-the-Ticket (identity-side: 4769, 4662, Mimikatz patterns).
+- **OT-SSH-Brute-WaterPlant-2026** — pivot-to-OT: Windows foothold
+  SSH-brute-forces a containerised water-treatment HMI
+  (`ot-hmi-water-01`), exfiltrates the SCADA process config, tampers
+  with a chlorine setpoint. Designed to exercise the
+  *personnel-safety* boundary that pure-IT scenarios don't put in scope.
 
-Both adversaries, all abilities, decoy data, and the S3 exfil target are
-seeded automatically.
+All three adversaries, all abilities, decoy data, the S3 exfil target,
+and the OT-HMI Docker simulator are seeded automatically.
 
 ---
 
@@ -226,14 +231,43 @@ README explains why).
 - ATT&CK Navigator layer:
   [`attack_navigator/identity_chain_layer.json`](attack_navigator/identity_chain_layer.json).
 
+### 3. OT-SSH-Brute-WaterPlant-2026 — pivot-to-OT chain
+
+Four attack abilities + one dwell against a containerised water-treatment
+HMI (`ot-hmi-water-01` at `172.20.0.60` on `hunt_net`). A compromised
+Windows host sweeps the adjacent Docker subnet for SSH, brute-forces the
+`operator` account with a short wordlist (8-12 attempts), exfiltrates
+`/etc/scada/water_treatment.conf`, and tampers with the
+`free_chlorine_target_ppm` setpoint.
+
+The HMI ships `/var/log/auth.log` to Elastic as `event.dataset:
+ot-hmi.auth`. Three detection rules in
+[`kibana/detection_rules/ot_brute.ndjson`](kibana/detection_rules/ot_brute.ndjson)
+fire on the brute pattern (high), the success-after-fail sequence
+(critical), and the SCADA config read (critical).
+
+Run it: Caldera → **Operations → New Operation → Adversary
+`OT-SSH-Brute-WaterPlant-2026`, Group `red`, Auto-run**. ~4-6 min
+end-to-end.
+
+- Scenario details, target architecture, what to look for in Kibana:
+  [`scripts/scenarios/ot_brute/README.md`](scripts/scenarios/ot_brute/README.md).
+- ATT&CK Navigator layer:
+  [`attack_navigator/ot_brute_layer.json`](attack_navigator/ot_brute_layer.json).
+
 ### What's seeded automatically
 
 - **Bootstrap container** creates `s3://ransomhub-exfil-lab` in LocalStack
-  and pushes both adversaries (RansomHub + Identity Chain) into Caldera.
+  and pushes all three adversaries (RansomHub + Identity Chain + OT-SSH-Brute)
+  into Caldera.
 - **`win-server` provisioner** stages 105 decoy files under `C:\Shares\Finance\`
   and publishes the SMB share.
 - **`win-dc` provisioner** registers the kerberoastable SPN
   `HTTP/finance.lab.local` on `svc-deploy`.
+- **`ot-hmi` Docker service** comes up alongside the rest of the stack
+  with the weak `operator:Operator123` SSH account and the seeded
+  `/etc/scada/water_treatment.conf`. Auth log flows into Elastic via
+  the shared `ot_hmi_logs` volume + filebeat input.
 - **Each Windows VM** registers a sandcat agent in Caldera group `red`.
 
 ---

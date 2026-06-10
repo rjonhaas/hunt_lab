@@ -1,0 +1,15 @@
+
+============================================================
+  HUNT LAB — Water Treatment HMI (lab simulator)
+
+  Hostname:   ot-hmi-water-01
+  Function:   Chlorination dosing control HMI
+  Process:    pH/turbidity/free-chlorine monitoring + setpoint control
+  Owner:      Operations / SCADA team
+  Criticality: HIGH — production water supply dependency
+
+  Authorised use only. All access is logged. Personnel safety
+  consequences may follow operational disruption.
+
+  (this is a lab simulator — NOT a real ICS asset)
+============================================================

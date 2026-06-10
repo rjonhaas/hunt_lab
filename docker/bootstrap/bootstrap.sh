@@ -439,11 +439,20 @@ if [[ "${CALDERA_READY}" -eq 1 ]]; then
   else
     log "WARNING: caldera_identity_setup.py reported errors — check above."
   fi
+
+  log "Pushing OT-SSH-Brute-WaterPlant-2026 abilities + adversary to Caldera..."
+  if CALDERA_URL="http://caldera:8888" \
+     python3 /workspace/scripts/caldera_ot_brute_setup.py; then
+    log "OT-SSH-Brute scenario seeded into Caldera."
+  else
+    log "WARNING: caldera_ot_brute_setup.py reported errors — check above."
+  fi
 else
   log "WARNING: Caldera REST API not ready — skipping ability seeding."
   log "  Re-run manually with:"
   log "    python3 scripts/caldera_ransomhub_setup.py"
   log "    python3 scripts/caldera_identity_setup.py"
+  log "    python3 scripts/caldera_ot_brute_setup.py"
 fi
 
 # ── 10. Import Hunt Lab detection rules ──────────────────────────────────────

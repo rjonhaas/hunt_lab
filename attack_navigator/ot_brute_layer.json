@@ -1,0 +1,107 @@
+{
+  "name": "OT-SSH-Brute-WaterPlant-2026",
+  "versions": {
+    "attack": "14",
+    "navigator": "4.9.1",
+    "layer": "4.5"
+  },
+  "domain": "enterprise-attack",
+  "description": "Hunt Lab pivot-to-OT scenario: Windows-side foothold SSH-brute-forces a water-treatment HMI, dumps the SCADA process config, tampers with the chlorine setpoint. Designed to exercise SIFTics's Safety Officer architectural hard-stop (G16).",
+  "filters": {
+    "platforms": ["Windows", "Linux", "Network"]
+  },
+  "sorting": 3,
+  "layout": {
+    "layout": "side",
+    "aggregateFunction": "average",
+    "showID": true,
+    "showName": true,
+    "showAggregateScores": false,
+    "countUnscored": false
+  },
+  "hideDisabled": false,
+  "techniques": [
+    {
+      "techniqueID": "T1046",
+      "tactic": "discovery",
+      "score": 60,
+      "color": "",
+      "comment": "ot-01-recon — Test-NetConnection sweep 172.20.0.50-70 :22",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1029",
+      "tactic": "command-and-control",
+      "score": 30,
+      "color": "",
+      "comment": "ot-dwell-1-foothold — modelled attacker idle between recon and brute",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1110",
+      "tactic": "credential-access",
+      "score": 90,
+      "color": "",
+      "comment": "ot-02-ssh-brute — Posh-SSH password guessing against operator account",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1110.001",
+      "tactic": "credential-access",
+      "score": 90,
+      "color": "",
+      "comment": "ot-02-ssh-brute — Password Guessing sub-technique",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1602",
+      "tactic": "collection",
+      "score": 80,
+      "color": "",
+      "comment": "ot-03-config-dump — SCADA process config exfiltrated",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1602.002",
+      "tactic": "collection",
+      "score": 80,
+      "color": "",
+      "comment": "ot-03-config-dump — Network Device Configuration Dump sub-technique",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1565",
+      "tactic": "impact",
+      "score": 95,
+      "color": "",
+      "comment": "ot-04-setpoint-tamper — chlorine setpoint manipulation; ATT&CK for ICS T0836 equivalent",
+      "enabled": true
+    },
+    {
+      "techniqueID": "T1565.001",
+      "tactic": "impact",
+      "score": 95,
+      "color": "",
+      "comment": "ot-04-setpoint-tamper — Stored Data Manipulation sub-technique",
+      "enabled": true
+    }
+  ],
+  "gradient": {
+    "colors": ["#ffffff", "#ff6666"],
+    "minValue": 0,
+    "maxValue": 100
+  },
+  "legendItems": [
+    {"label": "OT/ICS-targeted technique", "color": "#ff6666"}
+  ],
+  "metadata": [
+    {"name": "scenario", "value": "ot_brute"},
+    {"name": "adversary_id", "value": "ot-adversary-ssh-brute-waterplant-2026"},
+    {"name": "target_host", "value": "ot-hmi-water-01 (172.20.0.60)"},
+    {"name": "siftics_demonstrates", "value": "G16 — Safety Officer personnel_safety hard_stop"}
+  ],
+  "showTacticRowBackground": false,
+  "tacticRowBackground": "#dddddd",
+  "selectTechniquesAcrossTactics": true,
+  "selectSubtechniquesWithParent": false
+}

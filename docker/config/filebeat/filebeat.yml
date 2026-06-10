@@ -1,4 +1,10 @@
-# filebeat.yml — ships CloudTrail-formatted JSON events to Elasticsearch.
+# filebeat.yml — multi-source shipper for the hunt_lab.
+#
+# Sources:
+#   1) LocalStack CloudTrail JSON → logs-aws.cloudtrail-default
+#   2) ot-hmi water-treatment HMI auth.log → logs-ot-hmi.auth-default
+#      (drives the ot_brute scenario / SIFTics Safety Officer demo)
+#
 # Mounted read-only into the filebeat container.
 
 filebeat.inputs:
@@ -19,6 +25,26 @@ filebeat.inputs:
     # Deduplicate on eventID so re-reads after restart don't double-index
     harvester_buffer_size: 16384
 
+  # ot-hmi simulator auth log — drives the ot_brute scenario.
+  # The ot-hmi container writes /var/log/auth.log into the ot_hmi_logs
+  # volume; filebeat mounts the same volume read-only at /var/log/ot-hmi/.
+  # Each line gets tagged event.dataset=ot-hmi.auth so the Kibana detection
+  # rule in kibana/detection_rules/ot_brute.ndjson can target it without
+  # colliding with any other dataset.
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/ot-hmi/auth.log
+    fields_under_root: true
+    fields:
+      event.dataset: ot-hmi.auth
+      host.name: ot-hmi-water-01
+      host.role: ot-hmi
+      service.type: sshd
+      hunt-lab.scenario: ot_brute
+    close_inactive: 5m
+    scan_frequency: 5s
+
 processors:
   - add_host_metadata: ~
   - add_docker_metadata: ~
@@ -28,12 +54,22 @@ processors:
         - "2006-01-02T15:04:05Z"
       test:
         - "2026-04-22T12:00:00Z"
+      ignore_missing: true   # ot-hmi lines have no eventTime; let ES @timestamp default
+      ignore_failure: true
 
 output.elasticsearch:
   hosts: ["http://elasticsearch:9200"]
   username: "elastic"
   password: "${ELASTIC_PASSWORD}"
-  index: "logs-aws.cloudtrail-default"
+  # Route by event.dataset so the CloudTrail and ot-hmi streams land in
+  # purpose-built indices. Detection rules query the per-stream index.
+  indices:
+    - index: "logs-aws.cloudtrail-default"
+      when.equals:
+        event.dataset: "aws.cloudtrail"
+    - index: "logs-ot-hmi.auth-default"
+      when.equals:
+        event.dataset: "ot-hmi.auth"
   ssl.enabled: false
 
 setup.ilm.enabled: false

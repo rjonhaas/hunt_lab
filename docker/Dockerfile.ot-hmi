@@ -1,0 +1,63 @@
+# Dockerfile.ot-hmi — SCADA water-treatment HMI simulator.
+#
+# This container exists for one reason: to be a believable OT/ICS target
+# for the ot_brute Caldera scenario. It is NOT a real SCADA stack — it
+# runs OpenSSH with a deliberately weak operator account, exposes a
+# realistic-looking /etc/scada/water_treatment.conf, and writes its
+# /var/log/auth.log to a bind-mounted directory so filebeat can ship the
+# brute-force evidence to Elastic without instrumenting the container.
+#
+# Why this matters for SIFTics: the Safety Officer persona's
+# personnel_safety dimension hard-stops on OT/ICS hosts. Having an
+# adversary that successfully brutes its way onto an SSH HMI gives the
+# Safety Officer something to refuse-to-isolate during the live demo —
+# G16 architectural enforcement visible on screen.
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openssh-server \
+        rsyslog \
+        ca-certificates \
+        iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Weak operator account. Password is intentionally guessable but not
+# trivial — common-wordlist brute-force takes 5-15 attempts to land,
+# which generates a realistic auth.log signal in Elastic.
+RUN useradd -m -s /bin/bash operator && \
+    echo 'operator:Operator123' | chpasswd && \
+    usermod -aG sudo operator
+
+# Disable root login; enable password auth (intentional weakness for the lab)
+RUN sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config && \
+    mkdir -p /var/run/sshd /var/log /etc/scada
+
+# Banner / motd identifies this as a SCADA HMI. SIFTics's Safety Officer
+# persona keys on this kind of context when scoring personnel_safety.
+COPY scenarios/ot_brute/motd /etc/motd
+COPY scenarios/ot_brute/banner /etc/ssh/banner
+RUN sed -i 's|^#*Banner.*|Banner /etc/ssh/banner|' /etc/ssh/sshd_config
+
+# Fake SCADA process config — the "crown jewel" the attacker would dump.
+COPY scenarios/ot_brute/water_treatment.conf /etc/scada/water_treatment.conf
+RUN chmod 644 /etc/scada/water_treatment.conf
+
+# rsyslog config that splits auth events to /var/log/auth.log
+COPY scenarios/ot_brute/rsyslog.conf /etc/rsyslog.d/50-default.conf
+
+COPY scenarios/ot_brute/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 22
+
+# Healthcheck — sshd listening
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ss -lnt | grep -q ':22 ' || exit 1
+
+CMD ["/entrypoint.sh"]

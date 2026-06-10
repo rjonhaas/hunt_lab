@@ -27,6 +27,7 @@ volumes:
   caldera_data:
   localstack_data:
   velociraptor_data:
+  ot_hmi_logs:
 
 services:
 
@@ -264,6 +265,39 @@ services:
     networks:
       - hunt_net
 
+  # ── ot-hmi (water-treatment HMI simulator for the ot_brute scenario) ────────
+  # Linux container with OpenSSH + a deliberately weak operator account,
+  # writing auth.log to a shared volume that filebeat picks up. Caldera's
+  # ot_brute adversary SSH-brute-forces this host from a Windows agent;
+  # filebeat ships the failed/accepted SSH events to Elastic as
+  # event.dataset: ot-hmi.auth. The detection rule in
+  # kibana/detection_rules/ot_brute.ndjson fires on the brute-force pattern.
+  # Sized so SIFTics's Safety Officer persona has an OT/ICS target it can
+  # recognise from the hostname + the dumped /etc/scada config — the
+  # demonstrable scenario for G16 (personnel_safety hard_stop).
+  ot-hmi:
+    build:
+      context: .
+      dockerfile: Dockerfile.ot-hmi
+    image: hunt-lab/ot-hmi:local
+    container_name: ot-hmi-water-01
+    hostname: ot-hmi-water-01
+    restart: unless-stopped
+    volumes:
+      - ot_hmi_logs:/var/log
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.60
+    healthcheck:
+      test: ["CMD-SHELL", "ss -lnt | grep -q ':22 '"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "hunt-lab.role=ot-hmi"
+      - "hunt-lab.scenario=ot_brute"
+
   # ── Filebeat ────────────────────────────────────────────────────────────────
   filebeat:
     image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-8.19.14}
@@ -278,6 +312,10 @@ services:
     volumes:
       - ./config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - ./cloudtrail:/var/log/localstack/cloudtrail:ro
+      # Same volume the ot-hmi simulator writes its auth.log into — mounted
+      # read-only here so filebeat can ship the SSH brute-force evidence to
+      # Elastic (see filebeat.yml input for /var/log/ot-hmi/auth.log).
+      - ot_hmi_logs:/var/log/ot-hmi:ro
     command: ["filebeat", "-e", "--strict.perms=false"]
     networks:
       - hunt_net
