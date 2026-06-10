@@ -28,7 +28,10 @@ RUN apt-get update && \
 # Weak operator account. Password is intentionally guessable but not
 # trivial — common-wordlist brute-force takes 5-15 attempts to land,
 # which generates a realistic auth.log signal in Elastic.
-RUN useradd -m -s /bin/bash operator && \
+# Ubuntu 22.04 ships a system 'operator' group (GID 37); drop it so the
+# user's own private group can be created cleanly by useradd -U.
+RUN { getent group operator && groupdel operator; } >/dev/null 2>&1 || true && \
+    useradd -m -s /bin/bash -U operator && \
     echo 'operator:Operator123' | chpasswd && \
     usermod -aG sudo operator
 

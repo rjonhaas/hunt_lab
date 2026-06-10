@@ -107,6 +107,13 @@ mkdir -p "${SCRIPT_DIR}/cloudtrail"
 log "Starting Filebeat and CloudTrail activity generator..."
 docker compose up -d filebeat cloudtrail-gen
 
+# ── 7b. Start OT-HMI simulator (water-treatment HMI for the ot_brute scenario)
+# Built lazily on first run; filebeat already has the shared volume mounted
+# read-only and will start shipping /var/log/ot-hmi/auth.log as soon as the
+# HMI's sshd writes a line.
+log "Starting OT-HMI simulator (water-treatment HMI for ot_brute scenario)..."
+docker compose up -d --build ot-hmi
+
 # ── 8. Health summary ─────────────────────────────────────────────────────────
 log ""
 log "Waiting for all services to stabilise (30s)..."
