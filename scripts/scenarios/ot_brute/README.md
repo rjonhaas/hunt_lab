@@ -105,6 +105,37 @@ Total runtime ≈ 4-6 minutes (4 abilities + 1 dwell, sequential).
 | ot-03-config-dump | `logs-ot-hmi.auth-*` | sshd records `pam_unix(sshd:session): session opened for user operator` then closes after the cat |
 | Detection: rule #2 fires | Security → Alerts | `ot-brute-02-success-after-fail` — CRITICAL severity |
 
+## OSINT validation — this isn't a synthetic threat model
+
+Every step of the chain maps to a publicly-reported incident or CISA/EPA
+advisory. The simulator is fictional; the technique pattern is not.
+
+| Step | Real-world precedent | Source |
+|---|---|---|
+| `ot-01-recon` (discover SSH HMIs on subnet) | Censys + CISA, Oct/Dec 2024: **~400 internet-exposed water HMIs** in the United States, **40 of them fully open with no credentials required**. Mass discovery is the documented precursor to every credential-attack wave on water sector OT. | [CISA + EPA Joint Factsheet, Dec 2024](https://www.cisa.gov/news-events/alerts/2024/12/13/cisa-and-epa-release-joint-fact-sheet-detailing-risks-internet-exposed-hmis-pose-wws-sector) |
+| `ot-02-ssh-brute` (weak `operator` account) | **CyberAv3ngers** (IRGC-affiliated) compromised **≥75 Unitronics PLC/HMI devices, including 34 at US water utilities** between Nov 2023 and Jan 2024. Aliquippa, PA water authority was hit using the default password `1111` on internet-reachable HMIs. The primitive is identical: credential attack against an internet-reachable HMI account. | [CISA AA23-335A](https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-335a) |
+| `ot-02-ssh-brute` (SSH brute as the primitive specifically) | Dragos 2024 Year in Review: *"a threat actor compromised VPNs, firewalls and PLCs using **brute force SSH attacks**"*. Explicit SSH-brute-against-OT, not just weak passwords. | [Dragos 2025 OT Cybersecurity Year in Review](https://www.dragos.com/dragos-2025-ot-cybersecurity-report-a-year-in-review) |
+| `ot-03-config-dump` (exfil SCADA process config) | Standard post-compromise step in the AA23-335A intrusions — once on the HMI, attackers read configuration and process telemetry to understand what they have access to. | [CISA AA23-335A](https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-335a) |
+| `ot-04-setpoint-tamper` (chlorine 1.20 → 0.40) | **Oldsmar, FL, 2021**: an actor accessed the HMI and changed the sodium hydroxide setpoint from **100 ppm to 11,100 ppm** before being interrupted by a human operator. (Attribution later disputed by the FBI, who suggested insider error rather than external compromise. The *technique* — setpoint manipulation via authenticated HMI access — is undisputed and is the case study every water-sector tabletop now references.) | [CISA AA21-042A](https://www.cisa.gov/news-events/cybersecurity-advisories/aa21-042a) / [CYOTE case study](https://cyote.inl.gov/content/uploads/24/2025/12/CyOTE-Case-Study_Oldsmar.pdf) |
+| `ot-04-setpoint-tamper` (undisputed externally-attributed setpoint tampering) | **CyberArmyofRussia_Reborn (CARR)** attacks on US water utilities in 2024: hacktivists *"maxed out set points, altered other settings, turned off alarm mechanisms, and changed administrative passwords to lock out the water utility operators"* — forcing manual operations at multiple US water systems. | [CISA + EPA Joint Factsheet, Dec 2024](https://www.cisa.gov/news-events/alerts/2024/12/13/cisa-and-epa-release-joint-fact-sheet-detailing-risks-internet-exposed-hmis-pose-wws-sector) / [CyberScoop — Sandworm/APT44 Texas water facility](https://cyberscoop.com/sandworm-apt44-texas-water-facility/) |
+
+### Why this matters for an AI-DFIR scenario specifically
+
+In 2025, Dragos published its first investigation of an **AI-assisted ICS
+intrusion against a municipal water utility** — the adversary used Claude
+and OpenAI-family models to compress what would have been days of OT
+reconnaissance into hours, accelerating the IT-to-OT pivot using the same
+credential-abuse and weak-authentication primitives this scenario
+exercises. ([Dragos blog](https://www.dragos.com/blog/ai-assisted-ics-attack-water-utility) / [Industrial Cyber summary](https://industrialcyber.co/reports/dragos-details-ai-assisted-intrusion-targeting-mexican-water-utility-as-claude-openai-models-used-to-pursue-ot-access/))
+
+That report is the reason this lab includes a Safety-Officer hard-stop
+case at all. If attackers are using LLMs to accelerate OT compromise,
+defenders need LLM-driven response tools that are **architecturally
+prevented** from taking actions that endanger personnel safety —
+not just told "be careful" in a system prompt. The `ot_brute` scenario
+is the lab's way of producing evidence that triggers exactly that
+guardrail in a downstream agent.
+
 ## Why this is the Safety Officer's scenario
 
 When SIFTics's Investigation Section Chief produces findings from the
