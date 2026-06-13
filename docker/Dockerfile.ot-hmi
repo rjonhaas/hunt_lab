@@ -47,9 +47,16 @@ COPY scenarios/ot_brute/motd /etc/motd
 COPY scenarios/ot_brute/banner /etc/ssh/banner
 RUN sed -i 's|^#*Banner.*|Banner /etc/ssh/banner|' /etc/ssh/sshd_config
 
-# Fake SCADA process config — the "crown jewel" the attacker would dump.
+# Fake SCADA process config - the "crown jewel" the attacker would dump.
+# /etc/scada is operator-owned because in real ICS deployments the
+# operator account legitimately adjusts setpoints (chlorine dose, pH
+# alarm thresholds, etc.) without escalating to root. That same
+# permission is what the ot-04-setpoint-tamper step exploits to rewrite
+# the chlorine setpoint after compromising the operator account.
 COPY scenarios/ot_brute/water_treatment.conf /etc/scada/water_treatment.conf
-RUN chmod 644 /etc/scada/water_treatment.conf
+RUN chown -R operator:operator /etc/scada && \
+    chmod 775 /etc/scada && \
+    chmod 664 /etc/scada/water_treatment.conf
 
 # rsyslog config that splits auth events to /var/log/auth.log
 COPY scenarios/ot_brute/rsyslog.conf /etc/rsyslog.d/50-default.conf

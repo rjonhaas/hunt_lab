@@ -283,6 +283,14 @@ services:
     container_name: ot-hmi-water-01
     hostname: ot-hmi-water-01
     restart: unless-stopped
+    # Port 22 is published to the docker-host on 2222 so Windows agents
+    # on the host-only network (192.168.56.0/24) can reach the HMI via
+    # the docker-host's IP at 192.168.56.10:2222. Mirrors a real edge
+    # appliance or jump-host port-forwarder that creates the IT->OT
+    # pivot path - exactly the kind of misconfiguration attackers
+    # exploit when SCADA networks "shouldn't" be reachable from IT.
+    ports:
+      - "2222:22"
     volumes:
       - ot_hmi_logs:/var/log
     networks:

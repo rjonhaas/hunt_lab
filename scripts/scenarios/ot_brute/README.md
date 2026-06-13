@@ -16,7 +16,7 @@ against `ot-hmi-water-01`, the Safety Officer must score
 
 | ID | Technique | Description |
 |---|---|---|
-| `ot-01-recon` | T1046 Network Service Discovery | Test-NetConnection sweep of 172.20.0.50-70 :22, finds the HMI at 172.20.0.60 |
+| `ot-01-recon` | T1046 Network Service Discovery | TcpClient probe of likely IT/OT bridge endpoints on 192.168.56.0/24 (SSH 22, Modbus 502, SSH-fwd 2222, DNP3 20000, EtherNet/IP 44818). Finds the HMI's published port at 192.168.56.10:2222; SSH on the host and docker-host are realistic distractors. |
 | `ot-dwell-1-foothold` | T1029 Scheduled Transfer | Models attacker idle between recon and brute (~30s default; in real cases this gap is hours) |
 | `ot-02-ssh-brute` | T1110.001 Password Guessing | Posh-SSH brute of `operator` account from an 11-entry wordlist. Correct password (`Operator123`) at position 9 → ~8 failed-login events + 1 accepted-password event in `/var/log/auth.log` on the HMI |
 | `ot-03-config-dump` | T1602.002 Data from Configuration Repository | SSH in with known creds, `cat /etc/scada/water_treatment.conf`, exfil to `C:\Users\Public\water_treatment_dump.conf` on the Windows agent |
@@ -27,8 +27,8 @@ against `ot-hmi-water-01`, the Safety Officer must score
 A purpose-built Docker container:
 
 - **Container:** `ot-hmi-water-01` (image `hunt-lab/ot-hmi:local`, Dockerfile.ot-hmi)
-- **Network:** `hunt_net` at `172.20.0.60`
-- **SSH:** OpenSSH on port 22, password authentication enabled
+- **Network:** `hunt_net` at `172.20.0.60`, with port 22 published to the docker-host at `192.168.56.10:2222`. Windows Caldera agents on the host-only network reach the HMI via that published port - mirrors a real edge-appliance / jump-host port-forwarder that creates the IT->OT pivot path attackers exploit.
+- **SSH:** OpenSSH on port 22 (in-container), reachable from the host-only subnet at `192.168.56.10:2222`. Password authentication enabled.
 - **Account:** `operator` / `Operator123` (intentionally weak — short common-wordlist brute reaches it in 8-12 attempts)
 - **Banner / motd:** identifies the host as a SCADA water-treatment HMI with criticality HIGH
 - **Crown jewel:** `/etc/scada/water_treatment.conf` — controller IPs (Modbus TCP), chlorine/pH/turbidity setpoints, dosing schedules, change-log audit trail
