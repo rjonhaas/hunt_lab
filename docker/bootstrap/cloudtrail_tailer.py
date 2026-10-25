@@ -73,8 +73,12 @@ def emit_event(service: str, operation: str, status: int) -> None:
     }
     if status >= 400:
         body["errorCode"] = f"HTTP_{status}"
-    with open(path, "w") as f:
-        json.dump(body, f, indent=2)
+    # Filebeat's log input decodes one JSON object per newline. Publish the
+    # completed file atomically so its glob cannot discover a partial record.
+    temporary_path = path + ".tmp"
+    with open(temporary_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(body) + "\n")
+    os.replace(temporary_path, path)
 
 
 def stream_logs():

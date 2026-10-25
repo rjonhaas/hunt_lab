@@ -7,7 +7,7 @@ filebeat.inputs:
     paths:
       - /var/log/localstack/cloudtrail/*.json
     json.keys_under_root: true
-    json.add_error_key: false
+    json.add_error_key: true
     json.message_key: "eventName"
     fields_under_root: true
     fields:
@@ -16,7 +16,8 @@ filebeat.inputs:
       cloud.region: us-east-1
     close_inactive: 5m
     scan_frequency: 10s
-    # Deduplicate on eventID so re-reads after restart don't double-index
+    # Use a stable document ID if a completed file is harvested again.
+    json.document_id: eventID
     harvester_buffer_size: 16384
 
 processors:
