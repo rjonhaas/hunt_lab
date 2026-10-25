@@ -17,3 +17,6 @@ docker/velociraptor/
 
 # Python bytecode from the benchmark harness scripts
 __pycache__/
+
+# Generated environment summary contains lab credentials
+lab-info.md

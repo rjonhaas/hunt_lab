@@ -102,22 +102,25 @@ seeded automatically.
 
 **Required software (install manually before running setup):**
 
+Missing VMware? Follow the [VMware installation walkthrough](docs/install-vmware.md).
+Setup prints these steps and stops if it cannot detect Workstation.
+
 | Software                | Version | Where                                                                             |
 |-------------------------|---------|-----------------------------------------------------------------------------------|
-| VMware Workstation Pro  | 17+     | [vmware.com](https://www.vmware.com/products/workstation-pro.html) (free for personal use) |
+| VMware Workstation Pro  | 17+     | [vmware.com](https://www.vmware.com/products/workstation-pro.html) (free for personal, educational and commercial use) |
 | Vagrant                 | 2.3+    | [developer.hashicorp.com/vagrant/install](https://developer.hashicorp.com/vagrant/install) |
 
-The setup script installs the `vagrant-vmware-utility` service and the
-`vagrant-vmware-desktop` plugin automatically.
+The setup scripts install the `vagrant-vmware-utility` service and the
+`vagrant-vmware-desktop` plugin when missing (see host compatibility below).
 
 ---
 
 ## Quick start
 
-### Linux / macOS
+### Linux (x86-64, VMware Workstation)
 
 ```bash
-git clone <repo-url> hunt_lab
+git clone --branch workshop/war-wagon https://github.com/rjonhaas/hunt_lab.git
 cd hunt_lab
 chmod +x setup.sh
 ./setup.sh
@@ -129,7 +132,8 @@ Open an **elevated PowerShell** prompt:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-cd C:\path\to\hunt_lab
+git clone --branch workshop/war-wagon https://github.com/rjonhaas/hunt_lab.git
+cd hunt_lab
 .\setup.ps1
 ```
 
@@ -148,9 +152,64 @@ Both scripts do the same thing in the same order:
    `Finance` SMB share.
 6. `vagrant up win11-victim` — joins domain, deploys agents.
 
-**First-run time: 30–45 minutes** (mostly box downloads and Windows reboots).
+**Build before the workshop. Allow several hours** for the first run, including
+large box downloads, Docker images, Windows reboots and enrollment. Cached-image
+rehearsals are not representative of a fresh participant download.
 
-If a step fails, re-run only that VM: `vagrant up <name> --provision`.
+If a step fails, fix the reported error and re-run that VM:
+`vagrant up <name> --provider vmware_desktop --provision`. Then start the remaining
+VMs in the order above. Running the whole setup script again reprovisions earlier
+VMs too. For a known tool-install failure, use a named provisioner instead, e.g.
+`vagrant provision win-server --provision-with install_atomic_red_team`.
+
+**Provisioned does not yet mean ready.** From the repository on either Windows
+or Linux, run the read-only check using Python already in the Ubuntu services VM:
+
+```text
+vagrant status
+vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py'
+```
+
+It checks Elasticsearch, Kibana, online Fleet enrollment, recently seen trusted
+Caldera agents, and recent Sysmon events for **each** of `win-dc`, `win-server`,
+and `win11-victim`. Duplicate or stale agents cannot substitute for a missing
+host. It exits nonzero when readiness is incomplete. Allow a few minutes after
+provisioning for enrollment and ingestion, then retry. This does not run attacks
+or prove that detections work. Rehearse the selected workshop operation next.
+
+### Host compatibility and common setup blockers
+
+- This Vagrantfile targets **x86-64 Linux or x64 Windows with VMware Workstation**.
+  The workshop rehearsal used Linux Mint on an x86-64 host. A fresh Windows-host
+  end-to-end installation still needs validation. macOS/Fusion and ARM hosts
+  (including Apple Silicon) are not supported by this workshop build.
+- Install Git and VMware before setup. Install Vagrant manually on Linux;
+  `setup.ps1` can install it on Windows. Docker Desktop is **not** required:
+  Docker runs inside `docker-host`.
+- Linux automatic utility installation supports Debian/Ubuntu with systemd.
+  Other Linux distributions need the VMware utility installed and running first.
+- The guests allocate 22 GB RAM. Setup rejects hosts below 24 GB; 32 GB or more
+  leaves better room for the host. Keep 150 GB free at minimum, preferably 250 GB.
+  Vagrant caches boxes under `VAGRANT_HOME` (normally your user profile), which
+  may be on a different disk from the repository and VM files. Check both disks.
+- Enable hardware virtualization in firmware. Verify VMware can start an x64
+  guest before downloading the lab. On managed computers, installation or driver
+  restrictions may require using the conference-hosted lab.
+- The private lab uses `192.168.56.0/24`. Check for overlap with a VPN, LAN or
+  another hypervisor before starting. Changing this network requires updating
+  the Vagrantfile and guest provisioning settings together.
+- Keep the checkout in a local writable directory rather than OneDrive, a
+  network share or a cloud-synced directory. Do not build as Linux root: use your
+  normal account and let setup request sudo only for the utility installation.
+- Dependencies still include remotely downloaded boxes, packages and scripts.
+  Box versions are not pinned yet. For workshop release, record and verify a
+  tested downloadable version set, including the Windows image's evaluation
+  lifetime; disabling update checks alone does not pin fresh builds.
+
+Generated credentials stay local: `docker/.env`, `elastic-credentials.txt`,
+`fleet-enrollment-token.txt`, `domain-info.txt`, and `lab-info.md` are gitignored.
+Do not include them in support reports. Share the failing VM/provisioner name,
+exit code and redacted error text instead.
 
 ---
 

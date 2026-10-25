@@ -18,6 +18,32 @@ function Write-Log {
     Write-Host "[art] $Message"
 }
 
+function Publish-YamlDependency {
+    # The upstream installer uses the provisioning user's module directory.
+    # Sandcat runs as SYSTEM and cannot discover modules in that user profile.
+    $yaml = Get-Module -ListAvailable powershell-yaml |
+        Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $yaml) {
+        throw "powershell-yaml was not installed; Invoke-AtomicRedTeam cannot run."
+    }
+    $shared = Join-Path $env:ProgramFiles "WindowsPowerShell\Modules\powershell-yaml\$($yaml.Version)"
+    if ($yaml.ModuleBase.TrimEnd('\') -ne $shared.TrimEnd('\')) {
+        New-Item -ItemType Directory -Path $shared -Force | Out-Null
+        Copy-Item -Path (Join-Path $yaml.ModuleBase '*') -Destination $shared -Recurse -Force
+    }
+    # Verify in a clean process. The upstream installer has already loaded its
+    # user-scoped YAML module; forcing a second copy into that session collides
+    # with its exported cfy/cty aliases.
+    $manifest = Join-Path $shared 'powershell-yaml.psd1'
+    $verify = "`$ErrorActionPreference = 'Stop'; Import-Module '$manifest' -ErrorAction Stop; Import-Module 'C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1' -ErrorAction Stop; Get-Command Invoke-AtomicTest -ErrorAction Stop | Out-Null"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($verify))
+    & "$PSHOME\powershell.exe" -NoProfile -NonInteractive -EncodedCommand $encoded
+    if ($LASTEXITCODE -ne 0) {
+        throw "Atomic Red Team dependency verification failed in a clean PowerShell process."
+    }
+    Write-Log "Verified ART import; powershell-yaml is available in the all-users module directory."
+}
+
 # Exclude ART directory from Defender so payloads are not quarantined
 Write-Log "Adding Defender exclusion for C:\AtomicRedTeam..."
 try {
@@ -30,7 +56,8 @@ try {
 
 # Skip if already installed
 if (Test-Path "C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1") {
-    Write-Log "Invoke-AtomicRedTeam already installed - skipping."
+    Write-Log "Invoke-AtomicRedTeam already installed - verifying shared dependency."
+    Publish-YamlDependency
     Stop-Transcript
     exit 0
 }
@@ -48,6 +75,8 @@ if (-not (Test-Path "C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.
     Write-Error "Installation failed - module file not found after install."
     exit 1
 }
+
+Publish-YamlDependency
 
 $atomicCount = (Get-ChildItem "C:\AtomicRedTeam\atomics" -Directory -ErrorAction SilentlyContinue).Count
 Write-Log ""

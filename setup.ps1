@@ -12,7 +12,7 @@
 
     Prerequisites requiring manual install beforehand:
       VMware Workstation Pro 17+   https://www.vmware.com/products/workstation-pro.html
-      Docker Desktop               https://www.docker.com/products/docker-desktop/
+      Docker runs inside docker-host; Docker Desktop is not required.
 .EXAMPLE
     # From an elevated PowerShell prompt in the hunt_lab directory:
     Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -30,7 +30,7 @@ $UtilityVersion = "1.0.22"
 $PluginName     = "vagrant-vmware-desktop"
 
 # Minimum requirements
-$MinRamGB   = 20
+$MinRamGB   = 24
 $MinDiskGB  = 150
 
 function Write-Log  { param([string]$Msg) Write-Host "[setup] $Msg" -ForegroundColor Cyan }
@@ -54,12 +54,12 @@ function Invoke-Download {
     }
 }
 
-# Detect CPU architecture for MSI download URLs
-$Arch = switch ($env:PROCESSOR_ARCHITECTURE) {
-    "ARM64"  { "arm64" }
-    "x86"    { "386"   }
-    default  { "amd64" }
+# Guest boxes and VMware settings in this build target x64 Workstation.
+$hostArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+if ($hostArch -ne "AMD64") {
+    Write-Die "This lab requires an x64 Windows host. ARM and 32-bit hosts are not supported by this build."
 }
+$Arch = "amd64"
 
 Write-Log "================================================================="
 Write-Log "  Threat Hunting Lab - Setup"
@@ -75,7 +75,7 @@ if ($os) {
     $totalRamGB = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
     if ($totalRamGB -lt $MinRamGB) {
         Write-Warn "Only ${totalRamGB} GB RAM detected. Lab requires ${MinRamGB} GB minimum."
-        Write-Warn "Provisioning will likely fail. Consider adding RAM before continuing."
+        Write-Die "22 GB is allocated to guests. Use a host with at least 24 GB RAM (32 GB recommended)."
     } else {
         Write-Ok "RAM: ${totalRamGB} GB (OK)"
     }
@@ -87,7 +87,7 @@ if ($disk) {
     $freeGB = [math]::Round($disk.Free / 1GB, 1)
     if ($freeGB -lt $MinDiskGB) {
         Write-Warn "Only ${freeGB} GB free on ${drive}. Lab requires ${MinDiskGB} GB minimum."
-        Write-Warn "Provisioning may fail. Free up disk space before continuing."
+        Write-Die "Free up disk space before continuing; 250 GB is recommended."
     } else {
         Write-Ok "Disk free on ${drive}: ${freeGB} GB (OK)"
     }
@@ -122,9 +122,15 @@ if (-not $vmwareInstallPath) {
 }
 
 if (-not $vmwareInstallPath) {
-    Write-Die ("VMware Workstation Pro does not appear to be installed.`n" +
-               "  Download from: https://www.vmware.com/products/workstation-pro.html`n" +
-               "  Version 17 or later required. Re-run this script after installing.")
+    Write-Die ("VMware Workstation was not detected in PATH or the installation registry.`n" +
+               "  1. Open https://support.broadcom.com/ and sign in or register.`n" +
+               "  2. Under Free Software Downloads, choose VMware Workstation Pro for Windows (x64).`n" +
+               "  3. Run the downloaded installer as administrator and finish installation.`n" +
+               "  4. Open Workstation once and finish its first-run prompts. Reboot if requested.`n" +
+               "  5. Open a new elevated PowerShell, return to this repository, and run .\setup.ps1 again.`n" +
+               "  Already installed? Repair the installation or add its vmrun.exe directory to PATH.`n" +
+               "  Illustrated download guide: https://knowledge.broadcom.com/external/article/368734/download-desktop-hypervisor-workstation.html`n" +
+               "  Local walkthrough: docs/install-vmware.md")
 }
 
 # Ensure vmrun is reachable in this session and in child processes
@@ -247,6 +253,7 @@ if (-not $svc -or $svc.Status -ne "Running") {
             if ($svc.Status -ne "Running") { Start-Service -Name "vagrant-vmware-utility" -ErrorAction SilentlyContinue }
         } catch {}
     }
+    if (-not $svc -or $svc.Status -ne "Running") { Write-Die "VMware utility did not start. Inspect its Windows service before retrying." }
     Write-Ok "vagrant-vmware-utility installed."
 } else {
     Write-Ok "vagrant-vmware-utility is running."
@@ -254,8 +261,9 @@ if (-not $svc -or $svc.Status -ne "Running") {
 
 # --- 5. Install vagrant-vmware-desktop plugin ---
 Write-Log "Checking Vagrant plugin: $PluginName..."
-$pluginList = & $vagrantExe plugin list 2>$null
-if ($pluginList -notmatch [regex]::Escape($PluginName)) {
+$pluginList = (& $vagrantExe plugin list 2>$null) -join "`n"
+if ($LASTEXITCODE -ne 0) { Write-Die "Cannot list Vagrant plugins. Repair Vagrant before continuing." }
+if ($pluginList -notmatch ("(?m)^" + [regex]::Escape($PluginName) + "\s")) {
     Write-Log "Installing $PluginName plugin (requires internet)..."
     & $vagrantExe plugin install $PluginName
     if ($LASTEXITCODE -ne 0) { Write-Die "Plugin install failed (exit $LASTEXITCODE)." }
@@ -264,45 +272,27 @@ if ($pluginList -notmatch [regex]::Escape($PluginName)) {
     Write-Ok "Plugin $PluginName already installed."
 }
 
-# --- 6. Add Windows Vagrant boxes ---
-Write-Log "Checking for Windows Vagrant boxes..."
-$boxList = (& $vagrantExe box list 2>$null) -join "`n"
-if ($boxList -notmatch "gusztavvargadr/windows-11") {
-    Write-Log "Downloading Windows 11 box (~8-12 GB). This is the slowest step..."
-    & $vagrantExe box add gusztavvargadr/windows-11 --provider vmware_desktop
-    if ($LASTEXITCODE -ne 0) { Write-Die "Box download failed (exit $LASTEXITCODE)." }
-    Write-Ok "Windows 11 box downloaded."
-} else {
-    Write-Ok "Windows 11 box already present."
-}
-if ($boxList -notmatch "gusztavvargadr/windows-server-2022-standard") {
-    Write-Log "Downloading Windows Server 2022 box (~7-10 GB)..."
-    & $vagrantExe box add gusztavvargadr/windows-server-2022-standard --provider vmware_desktop
-    if ($LASTEXITCODE -ne 0) { Write-Die "Windows Server 2022 box download failed (exit $LASTEXITCODE)." }
-    Write-Ok "Windows Server 2022 box downloaded."
-} else {
-    Write-Ok "Windows Server 2022 box already present."
-}
-if ($boxList -notmatch "bento/ubuntu-22.04") {
-    Write-Log "Downloading Ubuntu 22.04 box (~700 MB) for the docker-host VM..."
-    & $vagrantExe box add bento/ubuntu-22.04 --provider vmware_desktop
-    if ($LASTEXITCODE -ne 0) { Write-Die "Ubuntu 22.04 box download failed (exit $LASTEXITCODE)." }
-    Write-Ok "Ubuntu 22.04 box downloaded."
-} else {
-    Write-Ok "Ubuntu 22.04 box already present."
-}
+# Resolve box names, versions and provider from the Vagrantfile at creation time.
+& $vagrantExe validate
+if ($LASTEXITCODE -ne 0) { Write-Die "Vagrantfile validation failed." }
 
 # --- 7. Bring up docker-host (Linux VM running the Docker Compose stack) ---
 Write-Log ""
 Write-Log "================================================================="
 Write-Log "  All prerequisites satisfied. Starting the lab..."
-Write-Log "  Estimated time: 25-40 minutes on first run"
+Write-Log "  Allow several hours for first-run downloads and provisioning"
 Write-Log "================================================================="
 Write-Log ""
 
 Write-Log "Step 1/4 - docker-host (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
-& $vagrantExe up docker-host --provision
+& $vagrantExe up docker-host --provider vmware_desktop --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "docker-host provisioning failed. Run 'vagrant ssh docker-host' and check 'docker compose logs' inside the VM." }
+foreach ($artifact in @("elastic-credentials.txt", "fleet-enrollment-token.txt")) {
+    $path = Join-Path $PSScriptRoot $artifact
+    if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
+        Write-Die "docker-host did not produce $artifact. Check bootstrap and /vagrant shared-folder access."
+    }
+}
 Write-Ok "docker-host is up."
 
 $HostIP = "192.168.56.10"
@@ -365,17 +355,21 @@ if (Test-Path $TemplateNdjson) {
 
 # --- 8. Bring up Windows VMs ---
 Write-Log "Step 2/4 - win-dc (Active Directory DC)..."
-& $vagrantExe up win-dc --provision
+& $vagrantExe up win-dc --provider vmware_desktop --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "win-dc provisioning failed. Check the output above for details." }
+$domainInfoPath = Join-Path $PSScriptRoot "domain-info.txt"
+if (-not (Test-Path $domainInfoPath) -or (Get-Item $domainInfoPath).Length -eq 0) {
+    Write-Die "win-dc did not produce domain-info.txt. Fix DC post-reboot provisioning before starting members."
+}
 Write-Ok "win-dc is up."
 
 Write-Log "Step 3/4 - win-server (Domain member server)..."
-& $vagrantExe up win-server --provision
+& $vagrantExe up win-server --provider vmware_desktop --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "win-server provisioning failed. Check the output above for details." }
 Write-Ok "win-server is up."
 
 Write-Log "Step 4/4 - win11-victim (Windows 11)..."
-& $vagrantExe up win11-victim --provision
+& $vagrantExe up win11-victim --provider vmware_desktop --provision
 if ($LASTEXITCODE -ne 0) { Write-Die "win11-victim provisioning failed. Check the output above for details." }
 Write-Ok "win11-victim is up."
 
@@ -385,7 +379,7 @@ $elasticCreds = if (Test-Path $credsFile) { (Get-Content $credsFile -Raw).Trim()
 
 Write-Log ""
 Write-Log "================================================================="
-Write-Ok  "  Lab is up and ready!"
+Write-Ok  "  VM provisioning finished. Run the readiness check before class."
 Write-Log ""
 Write-Log "  Kibana (SIEM):   http://${HostIP}:5601"
 Write-Log "  Caldera (C2):    http://${HostIP}:8888   (admin / HuntLab2026!)"
@@ -395,7 +389,8 @@ Write-Log ""
 Write-Log "  RDP into victim: vagrant rdp win11-victim"
 Write-Log "  RDP into DC:     vagrant rdp win-dc"
 Write-Log "  Docker logs:     vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose logs -f'"
-Write-Log "  Tear down all:   vagrant destroy -f"
+Write-Log "  Readiness: vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py'"
+Write-Log "  Tear down all (deletes guest data): vagrant destroy"
 Write-Log "================================================================="
 
 # --- 10. Write env details to lab-info.md at repo root ---
