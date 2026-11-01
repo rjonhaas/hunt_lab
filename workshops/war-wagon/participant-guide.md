@@ -1,190 +1,105 @@
-# War Wagon — participant guide
+# War Wagon — from intelligence to evidence
 
-## Before starting
+## Goal
 
-Use your own completed lab or the instance assigned by the facilitator. The
-shared instance details will be supplied before the workshop. Do not run setup
-scripts on a shared instance. The lab's `lab.local` domain is separate from the
-conference's `deathlab.net` environment.
+Read [Discovery Before Collection](training-report.md), translate its behaviors
+into Caldera abilities, execute a controlled operation, and explain its evidence
+in Kibana. Complete [the worksheet](hunt-worksheet.md) as you work.
 
-Local setup allocates 22 GB of guest RAM across four VMs; allow room for the host.
-The repository recommends a 32 GB host and 250 GB disk. Tracecat needs additional
-resources. Apple Silicon local deployment is not validated by this workshop;
-use a shared instance unless you have independently tested an alternative.
+## Choose your path
 
-Build before the session using [the repository setup guide](../../README.md),
-which includes exact clone commands for the workshop branch. Allow several hours
-for downloads and provisioning. Local setup targets x86-64 Linux or x64 Windows
-with VMware Workstation. macOS/Fusion and ARM are not supported by this build.
+| Step | Hosted Proxmox | Local lab |
+|---|---|---|
+| Interpret report | Discuss behavior choices with Joe | Identify behaviors yourself |
+| Build abilities | Joe demonstrates; explain your proposed commands | Create or adapt abilities yourself |
+| Assemble profile | Follow Joe's ordering and reasoning | Build and review your own profile |
+| Run operation | Joe executes once on the shared target | Execute on your own lab target |
+| Hunt | Independently search shared Kibana data | Search your own Kibana data |
+| Submit | Two flags plus evidence worksheet | Same flags plus your own evidence worksheet |
 
-After provisioning, run from the repository on either supported host:
+Local labs must be ready before class. Follow [repository setup](../../README.md)
+and its VMware/Vagrant prerequisites. Hosted students do not run provisioning,
+modify Caldera, reset VMs, or edit shared Elastic objects. The instructor supplies
+access details and the indexed hostname; never assume local and hosted IPs match.
 
-```text
-vagrant status
-vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py'
-```
+Before the live exercise, complete the [target telemetry preparation](scenario/README.md#required-target-preparation).
+Joe handles this for hosted participants. This enables file-creation evidence for
+the dedicated training directory while retaining the lab’s existing Sysmon rules.
 
-The read-only check verifies core services, current agents and recent Sysmon
-telemetry for each of the three Windows hosts. It does not prove every scenario
-or detection works. Rehearse the selected operation and inspect its evidence in
-Kibana before class. The broader `scripts/validate_lab.ps1` check is optional and
-also covers extensions outside the core workshop.
+## 1. Extract behaviors before choosing tools
 
-## 1. Understand and configure the Vagrant build
+For each of the report's four stages, write the intended outcome, a possible
+Windows command, required privileges, side effects, expected logs, and cleanup.
+Explain which details the report supports and which are your simulation choices.
+Do not run a larger prebuilt attack chain just because it contains one useful step.
 
-Open the repository Vagrantfile and map each VM definition to its role. Locate
-its base box, private IP, memory, CPUs, and provisioners. In a working copy,
-change one VM display name and explain which behaviors this does and does not
-change. Hosted participants complete the same configuration exercise without
-applying changes to the shared deployment.
+## 2. Translate into Caldera abilities
 
-The repository's local provisioning order is:
+An ability describes an action, including its platform, executor, command, and
+any prerequisites or cleanup. A profile collects an ordered selection of
+abilities; an operation applies that selection to agents under a planner.
 
-```bash
-vagrant up docker-host
-vagrant up win-dc win-server win11-victim --no-parallel
-vagrant status
-```
+Inspect an existing Windows ability as a reference. For each report behavior,
+select a suitable ability or create a separate workshop copy. Review its actual
+command, not just its title or technique label. Choose an executor that supports
+your command and verify required tools exist on the target.
 
-Use these only on your own intended local lab after completing the prerequisites.
-The services host produces enrollment material used by the Windows provisioners.
-A prepared recording covers long downloads and installation steps. Record a
-checkpoint for VM status, service availability, agent enrollment, and telemetry.
+Keep discovery and staging distinguishable in the operation results. Add the
+instructor-provided marker instrumentation using the workshop instructions;
+record how it changes the command without changing the intended behavior.
+Do not use the marker itself as your proposed real-world detection.
 
-## 2. Plan a Caldera operation
+## 3. Assemble and review
 
-Locate the intended agent and confirm its hostname and group. Inspect the
-selected ability's platform, executor, command, expected effects, and cleanup.
-Explain how the adversary profile groups abilities into a scenario and how the
-operation selects targets and executes those abilities.
+Create your own profile with discovery before staging. Give abilities and the
+profile unique names/IDs so other content is not overwritten. Review every
+command, input, dependency, expected output, and cleanup action.
 
-Record the agent, profile, ability IDs, and UTC start/end window. On a personal
-disposable lab, run only the rehearsed workshop selection. On a shared instance,
-the facilitator runs the operation and supplies its results. The default `red`
-group contains multiple Windows agents, so verify scope before execution.
+Select only your assigned target. Verify the actual membership of any selected
+agent group. Check the planner's behavior and operation options in your installed
+version; a profile's visual order alone does not prove execution order. Keep
+cleanup manual until all evidence is captured.
 
-Inspect each result's status and output. Record what succeeded, failed, or
-remains uncertain. Predict the events one action should produce before opening
-Kibana.
+Predict the logs for each stage before execution. Record the operation ID and
+UTC start time, run the operation, then examine every executed link and result.
+A successful command status is not proof that its telemetry was collected.
 
-## 3. Predict the evidence
+## 4. Investigate in Kibana
 
-Brief: an operator used native discovery tools, staged a file-copy utility, and
-copied Finance-share documents to a destination represented by local S3 storage.
-Some later behaviors simulate ransomware impact. The lab does not reproduce
-the original intrusion's initial access or every stage of the source report.
+Open Discover and the instructor-specified data view. Scope to the actual
+hostname and an absolute time window around your run. Confirm the displayed
+timezone. Start with process creation and then examine file creation.
 
-Write your hypothesis in [the worksheet](hunt-worksheet.md) before opening the
-prebuilt detection rules. Example: “A script-launched file-copy utility accessed
-the Finance share and attempted a transfer to the lab S3 endpoint.”
+Suggested columns, where present: timestamp, hostname, dataset, event ID,
+process name, command line, parent process, user, and file path. Inspect raw
+JSON if normalized fields are absent. Record the actual field names you use.
 
-Name the evidence that would support it and one legitimate activity that could
-produce similar events. Distinguish a launched command from a successful copy.
+Use process identity and parent identity to establish relationships. A nearby
+timestamp is a lead, not proof of ancestry. Separate commands that were launched
+from file operations that completed. Different Caldera abilities may run in
+separate processes; do not invent a single parent/child chain between them.
 
-## 4. Establish the evidence window
+## 5. Two challenges
 
-Open Kibana → Discover, select a `logs-*` data view, and set the absolute UTC
-window supplied by the facilitator. Confirm the displayed timezone. Add columns
-`@timestamp`, `host.name`, `event.dataset`, `event.code`, `process.name`,
-`process.command_line`, and `process.parent.name` where available.
+**Discovery flag:** Find the marker in a discovery-related process command line.
+Submit it exactly, along with the host, timestamp, event/document ID, and command.
 
-Start with:
+**Staging flag:** Find the marker in the final staged filename. Submit the marker
+exactly, along with the full path, file-creation event, and creating process
+evidence. Explain how the process identities connect those events.
 
-```text
-event.dataset : "windows.sysmon_operational" and event.code : "1"
-```
+Flags are identical across both paths; timestamps and process identifiers are
+specific to each run and belong in the worksheet, not the fixed flag string.
+Local operators can inspect their own commands/configuration. Knowing a marker
+is not completion: demonstrate its independently collected endpoint evidence.
 
-Apply a host filter using the actual value in your events. Do not assume that
-the short Vagrant name and the indexed hostname are identical. Save the query,
-time window, and a document identifier for every finding. If ECS fields are
-missing, inspect the event JSON and record its raw `winlog.event_data` fields.
+## 6. Explain and repeat
 
-## 5. Reconstruct the transfer
+Write a short finding: observed behavior, supporting evidence, and limitations.
+Propose one behavior-based hunt and a plausible false positive. After evidence
+capture, change one harmless variable and predict its effect. Joe controls any
+shared rerun and reset; local students control their own environment.
 
-Find the file-copy process:
-
-```text
-event.dataset : "windows.sysmon_operational" and event.code : "1" and process.name : "rclone.exe"
-```
-
-Identify its command, parent, source path, destination endpoint, and bucket or
-prefix. Pivot to nearby script and shell processes:
-
-```text
-event.dataset : "windows.sysmon_operational" and event.code : "1" and process.name : ("wscript.exe" or "cmd.exe" or "rclone.exe")
-```
-
-Use process entity IDs or Sysmon ProcessGuid/ParentProcessGuid to establish
-ancestry where present. A nearby timestamp on the same host is a lead, not proof
-that one process launched another. Submit a timeline with at least three events.
-
-Now examine the cloud-side activity:
-
-```text
-event.dataset : "aws.cloudtrail" and eventSource : "s3.amazonaws.com" and eventName : "PutObject"
-```
-
-These are **lab-generated CloudTrail-shaped records**, derived from LocalStack
-request logs. The adapter preserves API operation and error status, but uses
-placeholder identity and source-IP values, empty request parameters, and an
-emission-time timestamp. Do not use those placeholders to attribute the user,
-source host, destination bucket, or an exact cross-system sequence.
-
-For successful-copy evidence, request the facilitator's S3 object listing and
-rclone log for this run. Correlate those with the endpoint command. Explain the
-limits of each source and label conclusions as observed, inferred, or unknown.
-
-## Optional extension: Build and tune a detection
-
-Start from the rclone process query above. Add context supported by actual data:
-script/shell parent, unusual executable location, source share, or destination.
-Explain what your added condition removes and what it could miss. Record the
-match count before and after. Test a known legitimate file-transfer example if
-the facilitator has supplied one; without a benign dataset, label false-positive
-performance **untested**, not “zero false positives.”
-
-Compare your result with the prebuilt `RansomHub: wscript → cmd → rclone exfil
-chain` rule. Does it prove ancestry, or just sequence events on a host? What
-happens if an administrator launches another transfer during the same window?
-
-On a shared instance, submit your query to the facilitator rather than editing
-the shared rule. On your own lab, create a separate disabled rule named with
-your initials, preview it against the run, and record the preview result. Old
-events outside a rule's lookback do not generate a fresh alert automatically.
-
-## Optional extension: Respond with evidence
-
-For one finding, build a response record containing:
-
-- Evidence IDs, UTC window, host, and detection condition.
-- Parent/child process context and a finding confidence with justification.
-- Transfer outcome: confirmed, attempted, failed, or unknown.
-- Suggested next action and why it is justified.
-- A check that would demonstrate the action worked.
-
-The intended automated workflow is alert → collect context → create a response
-record → analyst decision. The facilitator will demonstrate the verified
-integration when available. Do not treat a running Tracecat UI as proof that a
-workflow or alert connector is working. If the integration is unavailable,
-complete this record manually; that is a fallback exercise, not an automation
-success claim.
-
-## 6. Repeat and reset
-
-Change one approved variable, such as a harmless marker or output filename,
-and predict how its telemetry will change. Record the next operation window
-and compare the corresponding events. Hosted participants can compare two
-facilitator-provided runs. A custom marker ability remains to be implemented
-and rehearsed before this exercise can run live.
-
-Follow the facilitator's tested cleanup or recovery procedure. A snapshot,
-a rebuild, and an ability cleanup have different effects. Record what each
-restores, including whether Elastic retains earlier events. Shared participants
-leave reset operations to the facilitator.
-
-## 7. Finish
-
-Submit your worksheet and attempt the two War Wagon CTF challenges supplied by
-the facilitator. Keep the query, its limitations, and the evidence references
-with your report. For an extension, repeat the method with the identity-chain
-scenario after reading its host-targeting requirements.
+Use only reviewed cleanup scoped to the exercise's run directory. Preserve
+Elastic evidence through grading. If your lab fails, request the rehearsed
+fallback evidence window; label it as supplied evidence in your worksheet.

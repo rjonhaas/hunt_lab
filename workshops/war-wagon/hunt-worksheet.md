@@ -1,48 +1,83 @@
-# War Wagon — hunt worksheet
+# War Wagon — intelligence-to-Caldera worksheet
 
-Analyst / team:
-Assigned lab instance:
-Operation ID (provided by facilitator):
-UTC start / end:
-Data view and actual hostname:
+Name/team:
 
-## Hypothesis
+Path: hosted / local / supplied evidence
 
-Behavior expected:
-Evidence needed:
-What would disprove or weaken the hypothesis:
-Plausible legitimate explanation:
+Report: WW-TRAIN-001
 
-## Findings
+Target hostname and instance:
 
-| UTC timestamp | Host | Dataset / event ID | Document ID | Observation | Confidence / limitation |
+Operation ID and UTC start/end:
+
+Data view and displayed timezone:
+
+## Before execution: translate the report
+
+| Report behavior | Command or ability proposed | Why it represents the behavior | Privileges / prerequisites | Expected evidence | Cleanup |
 |---|---|---|---|---|---|
-| | | | | | |
-| | | | | | |
-| | | | | | |
+| User discovery | | | | | |
+| System discovery | | | | | |
+| Network discovery | | | | | |
+| Synthetic document staging | | | | | |
 
-Process ancestry and evidence that links the processes:
-Transfer source / destination:
-Proof of successful transfer, or reason it remains unknown:
+Which details are stated in the report, and which are your simulation choices?
 
-## Detection
+Profile name/ID and ability IDs:
 
-Initial query and match count:
-Revised query and match count:
-Positive test evidence:
-Benign test evidence (or “untested”):
-Expected false positives:
-Expected blind spots:
+Executor(s), planner, sequence, and target scope:
 
-## Response
+What must succeed before staging can run?
 
-Selected finding and evidence IDs:
-Enrichment collected:
-Recommended action:
-Required decision / owner:
-How to verify the outcome:
-What was automated and what was manual:
+What would cause you to stop before execution?
 
-## Report summary
+Hosted: record Joe's choices and your explanation. Local: record your own choices.
 
-Three sentences: what happened, evidence supporting it, and what remains unknown.
+## After execution: compare predictions with evidence
+
+| Stage | Caldera result | Endpoint event/document ID | Actual fields and UTC time | What is proven? | Missing evidence / limitations |
+|---|---|---|---|---|---|
+| User discovery | | | | | |
+| System discovery | | | | | |
+| Network discovery | | | | | |
+| Staging | | | | | |
+
+## Challenge 1: discovery
+
+Flag (submit privately):
+
+Host / UTC timestamp / event ID / document ID:
+
+Command line and user context:
+
+Query used and actual field names:
+
+## Challenge 2: staging
+
+Flag (submit privately):
+
+Full staged path:
+
+File-creation event/document ID:
+
+Creating process event/document ID:
+
+Matching process identity fields and values:
+
+Connection to the wider operation; distinguish ancestry from timing:
+
+## Debrief
+
+Three-sentence finding: what happened, evidence, and what remains unknown.
+
+Behavior-based hunt idea (without flag strings):
+
+Legitimate activity that could match:
+
+Additional context needed:
+
+Effect of missing command-line or file-creation logs:
+
+One changed variable and predicted telemetry difference:
+
+Cleanup method and verification:
