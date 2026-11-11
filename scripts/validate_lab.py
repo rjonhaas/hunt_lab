@@ -90,7 +90,7 @@ def main(argv=None):
         nonlocal failures
         try:
             ok, detail = action()
-        except (RuntimeError, KeyError, TypeError, AttributeError):
+        except (RuntimeError, KeyError, TypeError, AttributeError, OSError, ValueError):
             ok, detail = False, "service unavailable or unexpected response; check VM/container logs"
         print(f"[{' OK ' if ok else 'FAIL'}] {label}: {detail}")
         failures += not ok
@@ -122,6 +122,22 @@ def main(argv=None):
         missing = missing_hosts(live_caldera_hosts(agents, datetime.now(timezone.utc)))
         return not missing, "missing recent trusted hosts: " + ", ".join(missing) if missing else "all three hosts trusted and seen within five minutes"
 
+    def workshop():
+        folder = Path(__file__).resolve().parents[1] / 'workshops/war-wagon/scenario'
+        sys.path.insert(0, str(folder))
+        from preload import configuration, equivalent
+        from build import build
+        package = build(configuration())
+        profile = package['adversary']
+        found = request_json(cd + '/api/v2/adversaries/' + profile['adversary_id'], cd_auth)
+        if not equivalent(found, profile, 'adversaries'):
+            return False, 'workshop profile differs from configuration'
+        for ability in package['abilities']:
+            found = request_json(cd + '/api/v2/abilities/' + ability['ability_id'], cd_auth)
+            if not equivalent(found, ability, 'abilities'):
+                return False, 'workshop ability differs from configuration'
+        return True, 'four abilities and ordered profile verified; no operation started'
+
     def telemetry():
         result = request_json(es + "/logs-*/_search", auth, {
             "size": 0,
@@ -137,6 +153,7 @@ def main(argv=None):
 
     check("Elasticsearch", cluster)
     check("Kibana", kibana)
+    check("Workshop profile", workshop)
     check("Fleet enrollment", fleet)
     check("Caldera agents", caldera)
     check("Sysmon telemetry", telemetry)

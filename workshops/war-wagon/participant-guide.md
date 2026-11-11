@@ -1,105 +1,157 @@
-# War Wagon — from intelligence to evidence
+# War Wagon — workshop guide
 
-## Goal
+[Repository home](../../README.md) · [Evidence worksheet](hunt-worksheet.md)
 
-Read [Discovery Before Collection](training-report.md), translate its behaviors
-into Caldera abilities, execute a controlled operation, and explain its evidence
-in Kibana. Complete [the worksheet](hunt-worksheet.md) as you work.
+## 1. Install or join the hosted lab
 
-## Choose your path
+**Hosted:** open the Kibana URL supplied by the instructors. You do not install
+VMs or log into Caldera. The instructor demonstrates and runs the shared operation.
 
-| Step | Hosted Kibana | Local lab |
+**Local:** follow [local setup](../../docs/local-setup.md) before class. It builds
+the four VMs, installs the endpoint tools, enables the required Sysmon file rule,
+and preloads the workshop abilities and adversary. It does not run an attack.
+If instructors supplied a conference configuration, install it as directed
+before setup; otherwise you get the public practice exercise.
+
+After setup, check readiness from the repository folder:
+
+```text
+vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py'
+```
+
+Resolve failed checks before proceeding. Fresh builds take hours, not minutes.
+
+## 2. Find the URLs and logins
+
+**Local:** open `lab-info.md` in your cloned folder after setup succeeds:
+
+```bash
+# Linux
+cat lab-info.md
+```
+
+```powershell
+# Windows PowerShell
+Get-Content .\lab-info.md
+```
+
+It lists Kibana, Caldera, VM addresses and domain logins. The generated file is
+local to your machine and is not on GitHub. If setup failed before creating it,
+fix the reported stage first. See [access details](../../docs/local-setup.md#accessing-the-lab).
+
+**Hosted:** use the instructor-provided Kibana URL and learner account. Local
+`192.168.56.*` URLs and local administrator credentials do not apply.
+
+## 3. Read the report
+
+Read [Discovery Before Collection](training-report.md). The operator identifies
+the current user, computer and network configuration, then stages a synthetic
+document. No real files are collected and no exfiltration is performed.
+
+Open the [worksheet](hunt-worksheet.md). Predict the process and file events
+before looking at the results. Separate the reported behavior from our chosen
+command and from the artificial flag instrumentation.
+
+## 4. Understand the four prepared abilities
+
+**Local:** open Caldera's Abilities view and search for `WW-TRAIN-001` and your
+run label. **Hosted:** follow the instructor's view. Setup has already built
+these objects; you do not need to author flag-bearing commands during the CTF.
+
+| Ability | Behavior | Reference action |
 |---|---|---|
-| Interpret report | Discuss behavior choices with Joe | Identify behaviors yourself |
-| Build abilities | Joe demonstrates; explain your proposed commands | Create or adapt abilities yourself |
-| Assemble profile | Follow Joe's ordering and reasoning | Build and review your own profile |
-| Run operation | Joe executes once on the shared target | Execute on your own lab target |
-| Hunt | Independently search shared Kibana data | Search your own Kibana data |
-| Submit | Two flags plus evidence worksheet | Same flags plus your own evidence worksheet |
+| Discover current user | Identify the execution account | `whoami.exe`, wrapped with the discovery marker |
+| Discover computer name | Identify the target | `hostname.exe` |
+| Discover network configuration | Inspect interfaces and addresses | `ipconfig.exe /all` |
+| Stage a synthetic document | Create and copy training text | PowerShell creates a run directory and copies a synthetic file into `staging` |
 
-Local labs must be ready before class. Follow [local setup](../../docs/local-setup.md)
-and its VMware/Vagrant prerequisites. Hosted students do not run provisioning,
-modify Caldera, reset VMs, or edit shared Elastic objects. The instructor supplies
-access details and the indexed hostname; never assume local and hosted IPs match.
+Each uses the Windows `psh` executor. Inspect the command, prerequisites and
+expected output. The staging action refuses to overwrite an existing run
+directory. Flags are exercise instrumentation, not real-world detection logic.
 
-Before the live exercise, complete the [target telemetry preparation](scenario/README.md#required-target-preparation).
-Joe handles this for hosted participants. This enables file-creation evidence for
-the dedicated training directory while retaining the lab’s existing Sysmon rules.
+Atomic Red Team is also installed. During the instructor's walkthrough you can
+inspect a test without executing it on your own Windows lab VM:
 
-## 1. Extract behaviors before choosing tools
+```powershell
+Import-Module C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1
+Invoke-AtomicTest T1059.001 -ShowDetailsBrief
+```
 
-For each of the report's four stages, write the intended outcome, a possible
-Windows command, required privileges, side effects, expected logs, and cleanup.
-Explain which details the report supports and which are your simulation choices.
-Do not run a larger prebuilt attack chain just because it contains one useful step.
+Creating your own ability is an optional follow-up; use a separate copy and
+keep the prepared CTF profile intact.
 
-## 2. Translate into Caldera abilities
+## 5. Review the prepared adversary
 
-An ability describes an action, including its platform, executor, command, and
-any prerequisites or cleanup. A profile collects an ordered selection of
-abilities; an operation applies that selection to agents under a planner.
+Open Caldera's Adversaries view and select **`WW-TRAIN-001 <run-label>`**.
+The default public profile is **`WW-TRAIN-001 practice-01`**. For the conference,
+use the profile name supplied by the instructors.
 
-Inspect an existing Windows ability as a reference. For each report behavior,
-select a suitable ability or create a separate workshop copy. Review its actual
-command, not just its title or technique label. Choose an executor that supports
-your command and verify required tools exist on the target.
+Verify the selected abilities are ordered as follows:
 
-Keep discovery and staging distinguishable in the operation results. Add the
-instructor-provided marker instrumentation using the workshop instructions;
-record how it changes the command without changing the intended behavior.
-Do not use the marker itself as your proposed real-world detection.
+1. Discover current user.
+2. Discover computer name.
+3. Discover network configuration.
+4. Stage a synthetic document.
 
-## 3. Assemble and review
+An adversary profile groups the actions. An operation records their execution.
+Do not select an unrelated built-in Caldera profile. If the workshop profile
+is missing, rerun the setup/bootstrap step; do not silently substitute another.
 
-Create your own profile with discovery before staging. Give abilities and the
-profile unique names/IDs so other content is not overwritten. Review every
-command, input, dependency, expected output, and cleanup action.
+To learn how it was built afterward, create a new uniquely named adversary,
+add copies of these four abilities in that order and save it. The
+[reference implementation](scenario/README.md) shows the full construction.
 
-Select only your assigned target. Verify the actual membership of any selected
-agent group. Check the planner's behavior and operation options in your installed
-version; a profile's visual order alone does not prove execution order. Keep
-cleanup manual until all evidence is captured.
+## 6. Run one controlled operation
 
-Predict the logs for each stage before execution. Record the operation ID and
-UTC start time, run the operation, then examine every executed link and result.
-A successful command status is not proof that its telemetry was collected.
+**Hosted:** the instructor performs these steps. Record the profile, target,
+operation ID and UTC evidence window they provide.
 
-## 4. Investigate in Kibana
+**Local:**
 
-Open Discover and the instructor-specified data view. Scope to the actual
-hostname and an absolute time window around your run. Confirm the displayed
-timezone. Start with process creation and then examine file creation.
+1. In Agents, identify the live Sandcat session on `win11-victim`. Check hostname,
+   user and recent check-in. Assign it to a group containing only that target.
+2. In Operations, create a new operation with a recognizable name.
+3. Select the prepared `WW-TRAIN-001 <run-label>` adversary and the **atomic** planner.
+4. Select your isolated target group. Review the actual selected agent, commands
+   and operation settings. Do not enable automatic cleanup before the hunt.
+5. Start the operation. Allow for agent check-in delays; do not launch duplicates.
+6. Inspect all four link results. Record the operation ID, indexed hostname and
+   UTC start/end times. A successful command does not prove its logs arrived.
 
-Suggested columns, where present: timestamp, hostname, dataset, event ID,
-process name, command line, parent process, user, and file path. Inspect raw
-JSON if normalized fields are absent. Record the actual field names you use.
+A run label identifies a staging directory. To run again, preserve the evidence,
+then follow the [instructor reset instructions](instructor/README.md#reruns-and-cleanup)
+or use a new configuration/run label. Repeating the same label against an existing
+directory intentionally fails rather than overwriting evidence.
 
-Use process identity and parent identity to establish relationships. A nearby
-timestamp is a lead, not proof of ancestry. Separate commands that were launched
-from file operations that completed. Different Caldera abilities may run in
-separate processes; do not invent a single parent/child chain between them.
+## 7. Hunt the flags in Kibana
 
-## 5. Two challenges
+Open **Discover → War Wagon logs** (`logs-*`). Hosted attendees use the data view
+assigned by the instructor if it has a different name. Select an absolute time
+window around the operation and scope to the actual indexed hostname.
 
-**Discovery flag:** Find the marker in a discovery-related process command line.
-Submit it exactly, along with the host, timestamp, event/document ID, and command.
+Start with process creation, replacing the example hostname as needed:
 
-**Staging flag:** Find the marker in the final staged filename. Submit the marker
-exactly, along with the full path, file-creation event, and creating process
-evidence. Explain how the process identities connect those events.
+```text
+host.name : "win11-victim" and event.code : "1" and data_stream.dataset : "windows.sysmon_operational"
+```
 
-Flags are identical across both paths; timestamps and process identifiers are
-specific to each run and belong in the worksheet, not the fixed flag string.
-Local operators can inspect their own commands/configuration. Knowing a marker
-is not completion: demonstrate its independently collected endpoint evidence.
+Inspect `process.name`, `process.command_line`, `user.name`, `@timestamp`,
+`process.entity_id` and `process.parent.entity_id`. Find the discovery marker
+in a discovery-related command line.
 
-## 6. Explain and repeat
+Then investigate file creation:
 
-Write a short finding: observed behavior, supporting evidence, and limitations.
-Propose one behavior-based hunt and a plausible false positive. After evidence
-capture, change one harmless variable and predict its effect. Joe controls any
-shared rerun and reset; local students control their own environment.
+```text
+host.name : "win11-victim" and event.code : "11" and data_stream.dataset : "windows.sysmon_operational"
+```
 
-Use only reviewed cleanup scoped to the exercise's run directory. Preserve
-Elastic evidence through grading. If your lab fails, request the rehearsed
-fallback evidence window; label it as supplied evidence in your worksheet.
+Find the staged filename under `C:\WarWagonTraining\<run-label>\staging\`.
+Use `file.path` and `process.entity_id` to connect it to its creating process.
+Inspect raw JSON if your displayed fields differ. Nearby timestamps alone do
+not prove a parent/child relationship.
+
+Submit both flag strings exactly and complete the worksheet with event/document
+IDs, host, UTC times, command/path and supporting process relationships. Explain
+what the evidence proves and what remains uncertain. Both local and hosted
+participants find the answers in Kibana; reading a flag from configuration is
+not completion.

@@ -1,86 +1,58 @@
 # War Wagon — DEATHCon workshop
 
-Turn a threat intelligence report into actions you can run in a lab, then find
-and explain the resulting evidence in Kibana.
+Turn a threat report into a repeatable lab operation, then find its evidence in
+Kibana. This is the focused `workshop/war-wagon` branch for Jon Haas and Joe
+Morrissey's workshop. The broader lab remains on [main](https://github.com/rjonhaas/hunt_lab/tree/main).
 
-This is the `workshop/war-wagon` branch of Hunt Lab, used by Jon Haas and
-Joe Morrissey for DEATHCon. Start here even if you are using the hosted lab.
+## Start here
 
-## Choose your path
+**[Follow the numbered workshop guide →](workshops/war-wagon/participant-guide.md)**
 
-| | Hosted workshop | Build your own lab |
-|---|---|---|
-| What you need | Browser and the supplied Kibana login | x64 Windows or x86-64 Linux, Git and VMware Workstation |
-| Who runs the actions | Instructor demonstrates Caldera and executes the shared operation | You build and run your own operation |
-| Where you investigate | Supplied Kibana URL and evidence window | Kibana in your local lab |
-| Start here | [Participant guide](workshops/war-wagon/participant-guide.md) | [Local setup](docs/local-setup.md), then the participant guide |
+Install → find logins → read the report → understand the four abilities →
+review the adversary → run the operation → hunt evidence.
 
-Hosted access is **Kibana only**. You do not need to install Vagrant or build VMs
-to follow the hosted exercise. Access details come from the instructors.
-
-## Workshop materials
-
-1. Read [Discovery Before Collection](workshops/war-wagon/training-report.md).
-2. Follow the [participant guide](workshops/war-wagon/participant-guide.md) to
-   turn its four behaviors into abilities, a profile and an operation.
-3. Use the [hunt worksheet](workshops/war-wagon/hunt-worksheet.md) to record
-   predictions, searches and evidence for the two challenges.
-
-The report is a synthetic training scenario: user, system and network discovery,
-followed by staging a synthetic document. Finding a flag is only part of the
-exercise; show the endpoint evidence that supports it.
-
-## What the local setup builds
-
-One [Vagrantfile](Vagrantfile) defines four VMware virtual machines:
-
-| VM | Role | Lab address |
-|---|---|---|
-| `docker-host` | Ubuntu; Caldera, Elasticsearch, Kibana and Fleet | `192.168.56.10` |
-| `win-dc` | Windows Server; `lab.local` domain and DNS | `192.168.56.50` |
-| `win-server` | Windows Server; domain member and file share | `192.168.56.51` |
-| `win11-victim` | Windows 11; domain workstation | `192.168.56.20` |
-
-[setup.sh](setup.sh) and [setup.ps1](setup.ps1) install supported missing Vagrant
-components, download the boxes, start the services, build the domain, join its
-members, install endpoint tools and check readiness. Sysmon records activity,
-Elastic Agent ships it to Elasticsearch, and Sandcat connects Windows to Caldera.
-
-For a local build, allow several hours and use **24 GB RAM minimum, 32 GB
-recommended; 150 GB free disk minimum, 250 GB recommended**. Install Git and
-VMware Workstation first. See [local setup](docs/local-setup.md) for the exact
-commands, supported hosts, disk/cache requirements and recovery instructions.
-Docker Desktop is not needed. This build does not support Apple Silicon or Fusion.
-
-The base lab also includes LocalStack, Velociraptor, Atomic Red Team and two
-preloaded scenarios. These are additional capabilities, not prerequisites to
-understanding the workshop exercise. [Additional lab reference](docs/lab-reference.md)
-covers those scenarios, benchmark exports and the optional Tracecat overlay.
-
-## Before the exercise
-
-Local attendees should finish setup and run the readiness check before class.
-Also complete the [target file-telemetry preparation](workshops/war-wagon/scenario/README.md#required-target-preparation)
-on the chosen Windows target. The instructor does this for the hosted lab.
-A successful command does not guarantee that the expected event was collected.
-
-The hosted reference exercise has passed endpoint-evidence checks. Linux setup
-has passed a local rehearsal; the fresh Windows-host build is still under test.
-Restricted learner access and a complete local exercise still need verification.
-See the [validation record](workshops/war-wagon/scenario/rehearsal.md) for scope and limitations.
-
-## Finding your way around
-
-| Location | Purpose |
+| Your path | What you do |
 |---|---|
-| [docs/local-setup.md](docs/local-setup.md) | Install, access, readiness and resume instructions |
-| [workshops/war-wagon/](workshops/war-wagon/README.md) | Report, participant guide and worksheet |
-| [scripts/](scripts/) | Windows and Linux machine setup |
-| [docker/](docker/) | Service definitions and first-run configuration |
-| [Instructor materials](workshops/war-wagon/instructor/README.md) | Delivery notes, rehearsal and reference builder |
-| [docs/lab-reference.md](docs/lab-reference.md) | Extra scenarios, tools and troubleshooting |
+| Hosted | Use the supplied Kibana login. Watch the instructor's Caldera demonstration and investigate the shared run. No local install needed. |
+| Local | Build four VMs before class. Run the prepared profile on your own target and investigate in your own Kibana. |
 
-Practice markers are public examples. Instructors provide workshop flag
-configuration separately; generated configurations, evidence and credentials
-should stay outside Git. The lab uses known training credentials and weakened
-guests; keep it on its intended lab network.
+Setup preloads **four abilities and one adversary profile**, including the flag
+instrumentation. It does not execute them. Both paths find the flags in Kibana
+and submit supporting events, not just a flag string.
+
+## What is included
+
+| VM | Purpose | Lab IP |
+|---|---|---|
+| `docker-host` | Ubuntu: Elasticsearch, Kibana, Fleet and Caldera | `192.168.56.10` |
+| `win-dc` | Windows Server: Active Directory and DNS | `192.168.56.50` |
+| `win-server` | Windows Server: domain member and synthetic Finance share | `192.168.56.51` |
+| `win11-victim` | Windows 11: domain workstation and workshop target | `192.168.56.20` |
+
+Windows hosts get Sysmon, Elastic Agent, Sandcat and **Atomic Red Team**. Setup
+also enables file-creation logging for the exercise directory. Atomic Red Team
+is included for discussion and further experiments; the four CTF abilities do
+not depend on running its tests.
+
+Local requirements: x64 Windows or x86-64 Linux, Git, VMware Workstation,
+24 GB RAM minimum (32 GB recommended), 150 GB free disk minimum (250 GB
+recommended). Allow several hours for the first build. See
+[setup and recovery](docs/local-setup.md). Apple Silicon and Fusion are not supported.
+
+## Materials
+
+- [Numbered workshop guide](workshops/war-wagon/participant-guide.md)
+- [Training report](workshops/war-wagon/training-report.md)
+- [Evidence worksheet](workshops/war-wagon/hunt-worksheet.md)
+- [Instructor setup and reference solutions](workshops/war-wagon/instructor/README.md)
+
+The public configuration uses practice flags. Instructors supply the conference
+configuration separately so local and hosted runs use the same flags. Local
+operators can inspect their configuration; challenge completion requires the
+matching Kibana events and an explanation.
+
+This branch no longer deploys the cloud simulator, extra attack scenarios,
+Velociraptor, SOAR or benchmark tools. Changing branches does not uninstall an
+existing lab; see [existing labs](docs/local-setup.md#existing-labs).
+The focused build needs a fresh end-to-end rehearsal; older full-lab results
+are not proof that this revision is ready for attendees.

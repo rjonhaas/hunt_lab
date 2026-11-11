@@ -142,17 +142,17 @@ run_machine() {
   for attempt in 1 2 3; do
     logfile="$LOG_DIR/$machine-attempt-$attempt.log"
     log "Building $machine (attempt $attempt/3); log: $logfile"
-    if timeout --kill-after=30 "$STAGE_TIMEOUT" vagrant up "$machine" --provider vmware_desktop --provision 2>&1 | tee "$logfile"; then
+    if timeout --kill-after=30 "$STAGE_TIMEOUT" vagrant up "$machine" --provider vmware_desktop --provision --no-destroy-on-error 2>&1 | tee "$logfile"; then
       return 0
     else
       rc=${PIPESTATUS[0]}
       [[ "$rc" -ne 0 ]] || rc=1
     fi
     # Retry only an explicit download failure. Do not mask guest script errors.
-    if [[ "$attempt" -lt 3 ]] && grep -Eqi 'error occurred while downloading|Could not resolve host|Failed to connect|SSL connect error' "$logfile"; then
+    if [[ "$attempt" -lt 3 ]] && ! grep -Eqi 'URL returned error: (401|403|404)' "$logfile" && grep -Eqi 'error occurred while downloading|error while downloading the metadata|Could not resolve host|Failed to connect|SSL connect error' "$logfile"; then
       warn "Download interrupted; retrying $machine in 10 seconds (cached progress is retained)."
       sleep 10
-    elif [[ "$attempt" -lt 3 ]] && grep -Eqi 'timed out while attempting to connect via WinRM|WinRM.*connection refused' "$logfile"; then
+    elif [[ "$attempt" -lt 3 ]] && { grep -Eqi 'timed out while attempting to connect via WinRM|WinRM.*connection refused' "$logfile" || { grep -q 'Timeout::Error' "$logfile" && grep -q 'plugins/communicators/winrm/' "$logfile"; }; }; then
       warn "WinRM connection failed; reloading $machine before retrying its provisioning."
       if ! timeout --kill-after=30 900 vagrant reload "$machine" 2>&1 | tee "$LOG_DIR/$machine-reload-$attempt.log"; then
         die "Could not recover $machine. See $LOG_DIR. Resume after fixing connectivity: bash setup.sh --from $machine"
@@ -200,7 +200,6 @@ log ""
 log "  Kibana (SIEM):   http://${HOST_IP}:5601   elastic / ${ELASTIC_PASS}"
 log "  Caldera (C2):    http://${HOST_IP}:8888   (admin / HuntLab2026!)"
 log "  Fleet Server:    http://${HOST_IP}:8220"
-log "  LocalStack API:  http://${HOST_IP}:4566"
 log ""
 log "  AD Domain:       lab.local  (NetBIOS: LAB)"
 log "  DC:              192.168.56.50  (win-dc)"
@@ -252,7 +251,6 @@ _This file contains credentials and is gitignored. Regenerated on every \`setup.
 | Elasticsearch | http://${HOST_IP}:9200 | \`elastic\` / \`${ELASTIC_PASS}\` |
 | Fleet Server | http://${HOST_IP}:8220 | — |
 | Caldera (C2) | http://${HOST_IP}:8888 | \`admin\` / \`HuntLab2026!\` (red API key: \`ADMIN123\`) |
-| LocalStack | http://${HOST_IP}:4566 | \`test\` / \`test\` (any region) |
 
 ## Active Directory
 
@@ -262,7 +260,7 @@ ${DOMAIN_SECTION}
 
 | VM | IP | Role |
 |---|---|---|
-| \`docker-host\` | 192.168.56.10 | Ubuntu — Docker stack (Elastic, Caldera, LocalStack, Filebeat) |
+| \`docker-host\` | 192.168.56.10 | Ubuntu — Docker stack (Elastic, Caldera) |
 | \`win-dc\` | 192.168.56.50 | Windows Server 2022 — AD DC for \`lab.local\` |
 | \`win-server\` | 192.168.56.51 | Windows Server 2022 — domain member |
 | \`win11-victim\` | 192.168.56.20 | Windows 11 — victim workstation |

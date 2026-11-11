@@ -5,7 +5,7 @@
 .DESCRIPTION
     Installs all prerequisites (Vagrant, vagrant-vmware-utility, vagrant-vmware-desktop
         plugin) if missing, then brings up the lab in this order:
-      1. Docker stack  (Elasticsearch + Kibana + Fleet Server + Caldera + LocalStack)
+      1. Docker stack  (Elasticsearch + Kibana + Fleet Server + Caldera)
       2. win-dc        (Windows Server 2022 — Active Directory DC)
       3. win-server    (Windows Server 2022 — Domain member)
       4. win11-victim  (Windows 11 + Sysmon + Elastic Agent)
@@ -18,6 +18,8 @@
     Set-ExecutionPolicy Bypass -Scope Process -Force
     .\setup.ps1
 #>
+
+param([ValidateSet('docker-host', 'win-dc', 'win-server', 'win11-victim')][string]$From = 'docker-host')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -53,6 +55,17 @@ function Invoke-Download {
         Write-Die "Failed to download $Label from $Url`n  $_`n  Check your internet connection and try again."
     }
 }
+
+$MachineOrder = @('docker-host', 'win-dc', 'win-server', 'win11-victim')
+$StageTimeout = 10800
+if ($env:LAB_STAGE_TIMEOUT_SECONDS) {
+    if (-not [int]::TryParse($env:LAB_STAGE_TIMEOUT_SECONDS, [ref]$StageTimeout) -or $StageTimeout -lt 1) {
+        Write-Die 'LAB_STAGE_TIMEOUT_SECONDS must be a positive integer.'
+    }
+}
+$LogDir = Join-Path $PSScriptRoot ('.setup-logs\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + "-$PID")
+New-Item -ItemType Directory -Force $LogDir | Out-Null
+. (Join-Path $PSScriptRoot 'scripts\setup_helpers.ps1')
 
 # Guest boxes and VMware settings in this build target x64 Workstation.
 $hostArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
@@ -90,6 +103,16 @@ if ($disk) {
         Write-Die "Free up disk space before continuing; 250 GB is recommended."
     } else {
         Write-Ok "Disk free on ${drive}: ${freeGB} GB (OK)"
+    }
+}
+
+# Box archives and expanded images can be on a different drive from the repo.
+$cachePath = if ($env:VAGRANT_HOME) { $env:VAGRANT_HOME } else { Join-Path $env:USERPROFILE '.vagrant.d' }
+$cacheRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($cachePath))
+if ($cacheRoot -and $cacheRoot.TrimEnd('\') -ine $drive) {
+    $cacheDisk = Get-PSDrive ($cacheRoot.TrimEnd(':\')) -ErrorAction SilentlyContinue
+    if ($cacheDisk -and $cacheDisk.Free / 1GB -lt $MinDiskGB) {
+        Write-Die "Vagrant cache drive $cacheRoot needs at least $MinDiskGB GB free. Set VAGRANT_HOME to a roomier local drive before running setup."
     }
 }
 
@@ -284,9 +307,8 @@ Write-Log "  Allow several hours for first-run downloads and provisioning"
 Write-Log "================================================================="
 Write-Log ""
 
-Write-Log "Step 1/4 - docker-host (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
-& $vagrantExe up docker-host --provider vmware_desktop --provision
-if ($LASTEXITCODE -ne 0) { Write-Die "docker-host provisioning failed. Run 'vagrant ssh docker-host' and check 'docker compose logs' inside the VM." }
+Write-Log "Step 1/4 - docker-host (Elasticsearch + Kibana + Fleet + Caldera)..."
+try { Invoke-LabMachine "docker-host" } catch { Write-Die $_.Exception.Message }
 foreach ($artifact in @("elastic-credentials.txt", "fleet-enrollment-token.txt")) {
     $path = Join-Path $PSScriptRoot $artifact
     if (-not (Test-Path $path) -or (Get-Item $path).Length -eq 0) {
@@ -297,66 +319,9 @@ Write-Ok "docker-host is up."
 
 $HostIP = "192.168.56.10"
 
-# --- Import Kibana threat hunt report template ---
-$KibanaUrl      = "http://${HostIP}:5601"
-$CredsFile      = Join-Path $PSScriptRoot "elastic-credentials.txt"
-$TemplateNdjson = Join-Path $PSScriptRoot "kibana\hunt_report_template.ndjson"
-
-if (Test-Path $TemplateNdjson) {
-    Write-Log "Importing Kibana Threat Hunt Report Template..."
-    if (-not (Test-Path $CredsFile)) {
-        Write-Warn "elastic-credentials.txt not found — skipping Kibana template import."
-    } else {
-        $RawCreds = (Get-Content $CredsFile -Raw).Trim()
-        $ColonIdx = $RawCreds.IndexOf(":")
-        if ($ColonIdx -le 0) {
-            Write-Warn "elastic-credentials.txt does not contain a valid 'user:password' entry — skipping import."
-        } else {
-            $KibUser  = $RawCreds.Substring(0, $ColonIdx)
-            $KibPass  = $RawCreds.Substring($ColonIdx + 1)
-            $B64Creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${KibUser}:${KibPass}"))
-
-            $KibReady = $false
-            $Deadline = (Get-Date).AddMinutes(5)
-            Write-Log "  Waiting for Kibana API to become available..."
-            while ((Get-Date) -lt $Deadline) {
-                try {
-                    $resp = Invoke-WebRequest -Uri "$KibanaUrl/api/status" `
-                        -Headers @{Authorization = "Basic $B64Creds"} `
-                        -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-                    if ($resp.StatusCode -eq 200) { $KibReady = $true; break }
-                } catch { }
-                Start-Sleep -Seconds 5
-            }
-
-            if (-not $KibReady) {
-                Write-Warn "Kibana did not become available within 5 minutes. Skipping template import."
-            } else {
-                $result = & curl.exe -s --max-time 30 `
-                    -u "${KibUser}:${KibPass}" `
-                    -X POST "$KibanaUrl/api/saved_objects/_import?overwrite=true" `
-                    -H "kbn-xsrf: true" `
-                    -F "file=@`"$TemplateNdjson`"" 2>&1
-                $parsed = $result | ConvertFrom-Json -ErrorAction SilentlyContinue
-                if ($parsed -and $parsed.success -eq $true) {
-                    Write-Ok "  Threat Hunt Report Template imported ($($parsed.successCount) objects)."
-                } else {
-                    Write-Warn "  Template import returned unexpected response: $result"
-                }
-            }
-        }
-    }
-} else {
-    Write-Warn "Template file not found at $TemplateNdjson — skipping import."
-}
-
-# Caldera abilities are loaded by the bootstrap container during
-# docker/setup.sh (see docker/bootstrap/bootstrap.sh) — nothing to do here.
-
 # --- 8. Bring up Windows VMs ---
 Write-Log "Step 2/4 - win-dc (Active Directory DC)..."
-& $vagrantExe up win-dc --provider vmware_desktop --provision
-if ($LASTEXITCODE -ne 0) { Write-Die "win-dc provisioning failed. Check the output above for details." }
+try { Invoke-LabMachine "win-dc" } catch { Write-Die $_.Exception.Message }
 $domainInfoPath = Join-Path $PSScriptRoot "domain-info.txt"
 if (-not (Test-Path $domainInfoPath) -or (Get-Item $domainInfoPath).Length -eq 0) {
     Write-Die "win-dc did not produce domain-info.txt. Fix DC post-reboot provisioning before starting members."
@@ -364,14 +329,20 @@ if (-not (Test-Path $domainInfoPath) -or (Get-Item $domainInfoPath).Length -eq 0
 Write-Ok "win-dc is up."
 
 Write-Log "Step 3/4 - win-server (Domain member server)..."
-& $vagrantExe up win-server --provider vmware_desktop --provision
-if ($LASTEXITCODE -ne 0) { Write-Die "win-server provisioning failed. Check the output above for details." }
+try { Invoke-LabMachine "win-server" } catch { Write-Die $_.Exception.Message }
 Write-Ok "win-server is up."
 
 Write-Log "Step 4/4 - win11-victim (Windows 11)..."
-& $vagrantExe up win11-victim --provider vmware_desktop --provision
-if ($LASTEXITCODE -ne 0) { Write-Die "win11-victim provisioning failed. Check the output above for details." }
+try { Invoke-LabMachine "win11-victim" } catch { Write-Die $_.Exception.Message }
 Write-Ok "win11-victim is up."
+
+$ready = $false
+for ($attempt = 1; $attempt -le 5; $attempt++) {
+    $code = Invoke-VagrantProcess -Arguments @('ssh', 'docker-host', '-c', '"python3 /vagrant/scripts/validate_lab.py"') -LogName "readiness-$attempt" -TimeoutSeconds 180
+    if ($code -eq 0) { $ready = $true; break }
+    if ($attempt -lt 5) { Start-Sleep -Seconds 15 }
+}
+if (-not $ready) { Write-Die "Provisioning finished but readiness failed. Logs: $LogDir. Rerun the readiness command below after fixing the reported checks." }
 
 # --- 9. Print access info ---
 $credsFile    = Join-Path $PSScriptRoot "elastic-credentials.txt"
@@ -379,11 +350,10 @@ $elasticCreds = if (Test-Path $credsFile) { (Get-Content $credsFile -Raw).Trim()
 
 Write-Log ""
 Write-Log "================================================================="
-Write-Ok  "  VM provisioning finished. Run the readiness check before class."
+Write-Ok  "  VM provisioning and core readiness checks passed."
 Write-Log ""
 Write-Log "  Kibana (SIEM):   http://${HostIP}:5601"
 Write-Log "  Caldera (C2):    http://${HostIP}:8888   (admin / HuntLab2026!)"
-Write-Log "  LocalStack API:  http://${HostIP}:4566"
 Write-Log "  Elastic creds:   $elasticCreds"
 Write-Log ""
 Write-Log "  RDP into victim: vagrant rdp win11-victim"
@@ -434,7 +404,6 @@ _This file contains credentials and is gitignored. Regenerated on every ``setup.
 | Elasticsearch | http://${HostIP}:9200 | ``$esUser`` / ``$esPass`` |
 | Fleet Server | http://${HostIP}:8220 | — |
 | Caldera (C2) | http://${HostIP}:8888 | ``admin`` / ``HuntLab2026!`` (red API key: ``ADMIN123``) |
-| LocalStack | http://${HostIP}:4566 | ``test`` / ``test`` (any region) |
 
 ## Active Directory
 
@@ -444,7 +413,7 @@ $domainSection
 
 | VM | IP | Role |
 |---|---|---|
-| ``docker-host`` | 192.168.56.10 | Ubuntu — Docker stack (Elastic, Caldera, LocalStack, Filebeat) |
+| ``docker-host`` | 192.168.56.10 | Ubuntu — Docker stack (Elastic, Caldera) |
 | ``win-dc`` | 192.168.56.50 | Windows Server 2022 — AD DC for ``lab.local`` |
 | ``win-server`` | 192.168.56.51 | Windows Server 2022 — domain member |
 | ``win11-victim`` | 192.168.56.20 | Windows 11 — victim workstation |

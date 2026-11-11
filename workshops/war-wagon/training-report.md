@@ -50,14 +50,13 @@ are exercise instrumentation, not real-world indicators or detection logic.
 
 ## Deliverable
 
-Translate this report into reviewed Caldera abilities and an ordered adversary
-profile. Predict the evidence before execution, then investigate the operation
-in Kibana and document the evidence for both flags.
+Review how the prepared Caldera abilities and ordered adversary profile reproduce
+this report. Predict the evidence, run the operation on the selected lab target,
+then investigate in Kibana and document both flags with supporting events.
 
-Hosted students contribute to Joe's walkthrough; Joe alone executes against the
-shared lab. Local students build and execute their own operation. Both groups
-use this report and the same challenge definitions.
+Hosted students follow the instructor's execution. Local students run the same
+prepared scenario in their own lab. Both paths use the same challenge definitions.
 
-Read [the participant guide](participant-guide.md), then complete
-[the worksheet](hunt-worksheet.md). A completed scenario is a fallback or
-post-workshop reference, not the starting exercise.
+Follow [the numbered guide](participant-guide.md) and complete
+[the worksheet](hunt-worksheet.md). Manual ability/profile authoring is an
+optional follow-up after the CTF.

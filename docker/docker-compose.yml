@@ -1,7 +1,6 @@
 # docker-compose.yml
 # Single-server Docker deployment of the Threat Hunting Lab.
-# Runs Elasticsearch, Kibana, Fleet Server, MITRE Caldera, LocalStack,
-# and Filebeat on one Ubuntu host.
+# Runs Elasticsearch, Kibana, Fleet Server and MITRE Caldera on one Ubuntu host.
 #
 # Usage:
 #   cp .env.example .env   # edit passwords/token
@@ -25,8 +24,6 @@ volumes:
   esdata:
   kibana_data:
   caldera_data:
-  localstack_data:
-  velociraptor_data:
 
 services:
 
@@ -190,129 +187,3 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-
-  # ── LocalStack ──────────────────────────────────────────────────────────────
-  localstack:
-    image: localstack/localstack:${LOCALSTACK_VERSION:-3.4}
-    container_name: localstack
-    restart: unless-stopped
-    environment:
-      - SERVICES=s3,iam,lambda,sts,cloudwatch,ec2
-      - DEFAULT_REGION=us-east-1
-      - EAGER_SERVICE_LOADING=1
-      - DEBUG=0
-      - LS_LOG=info  # cloudtrail-gen tailer parses 'AWS service.Op => status' lines from this stream
-      - DATA_DIR=/var/lib/localstack/data
-      - DOCKER_HOST=unix:///var/run/docker.sock
-    ports:
-      - "4566:4566"
-      - "4510-4559:4510-4559"
-    volumes:
-      - localstack_data:/var/lib/localstack
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      hunt_net:
-        ipv4_address: 172.20.0.40
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
-  # ── CloudTrail tailer ──────────────────────────────────────────────────────
-  # Seeds baseline AWS resources once (S3 buckets, IAM users, sample objects),
-  # then tails LocalStack's stdout via the Docker engine API and writes a
-  # CloudTrail-formatted JSON event per real API call into ./cloudtrail/.
-  # Filebeat picks the events up from that shared volume.
-  #
-  # Net effect: any AWS API hit against LocalStack — by the seed step, by
-  # Caldera abilities (rclone S3 exfil, future IAM scenarios), or by anything
-  # else the user runs — produces a real CloudTrail event in
-  # logs-aws.cloudtrail-*. No more synthetic noise.
-  cloudtrail-gen:
-    image: python:3.11-slim
-    container_name: cloudtrail-gen
-    restart: unless-stopped
-    depends_on:
-      localstack:
-        condition: service_healthy
-    environment:
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-      - LOCALSTACK_ENDPOINT=http://localstack:4566
-      - LOCALSTACK_CONTAINER=localstack
-      - CLOUDTRAIL_LOG_DIR=/cloudtrail
-      - DOCKER_SOCK=/var/run/docker.sock
-    volumes:
-      - ./cloudtrail:/cloudtrail
-      - ./bootstrap/generate_cloudtrail_activity.sh:/seed.sh:ro
-      - ./bootstrap/cloudtrail_tailer.py:/tailer.py:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        command -v curl >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq curl; }
-        pip install --no-cache-dir -q awscli-local awscli docker
-        # Tailer attaches first so it catches the seed's API calls; seed
-        # runs after a short delay in the background. Tailer stays in
-        # the foreground as the container's main process.
-        ( sleep 5 && bash /seed.sh ) &
-        exec python3 -u /tailer.py
-    networks:
-      - hunt_net
-
-  # ── Filebeat ────────────────────────────────────────────────────────────────
-  filebeat:
-    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-8.19.14}
-    container_name: filebeat
-    user: root
-    restart: unless-stopped
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    environment:
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
-    volumes:
-      - ./config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - ./cloudtrail:/var/log/localstack/cloudtrail:ro
-    command: ["filebeat", "-e", "--strict.perms=false"]
-    networks:
-      - hunt_net
-
-  # ── Velociraptor (DFIR endpoint visibility) ──────────────────────────────────
-  # Single-node Velociraptor server (weslambert/velociraptor-docker image).
-  # On first start it generates server.config.yaml, creates the admin user from
-  # VELOX_USER/VELOX_PASSWORD, and repacks platform clients — each with the
-  # server config embedded — into ./velociraptor/clients/.
-  #
-  # The Windows VMs install velociraptor_client_repacked.exe as a service so they
-  # auto-enroll as agents pointing at https://HOST_IP:8000/.
-  #
-  # NOTE: the datastore uses a NAMED volume, not a bind mount under /vagrant —
-  # Docker can't chown a bind-mount source on the VMware HGFS shared folder
-  # ("operation not permitted"). setup.sh instead `docker cp`s the repacked
-  # Windows client out to docker/velociraptor/clients/windows/ on the synced
-  # folder, where the Windows VMs read it as
-  # C:\vagrant\docker\velociraptor\clients\windows\ (scripts/install_velociraptor_client.ps1).
-  velociraptor:
-    image: wlambert/velociraptor
-    container_name: velociraptor
-    restart: unless-stopped
-    environment:
-      - VELOX_USER=${VELOX_USER:-admin}
-      - VELOX_PASSWORD=${VELOX_PASSWORD:?VELOX_PASSWORD is required}
-      - VELOX_ROLE=${VELOX_ROLE:-administrator}
-      - VELOX_SERVER_URL=https://${HOST_IP}:8000/
-      - VELOX_FRONTEND_HOSTNAME=${HOST_IP}
-    ports:
-      - "8000:8000"   # client comms
-      - "8001:8001"   # gRPC API
-      - "8889:8889"   # Web GUI (https)
-    volumes:
-      - velociraptor_data:/velociraptor
-    networks:
-      hunt_net:
-        ipv4_address: 172.20.0.50

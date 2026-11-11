@@ -1,16 +1,15 @@
 # Vagrantfile
-# Threat Hunting Lab: Elastic SIEM + Windows Domain + MITRE Caldera + Local Cloud Sim
+# Threat Hunting Lab: Elastic SIEM + Windows Domain + MITRE Caldera
 #
 # Architecture:
 #   All services run inside Vagrant VMs. The docker-host Linux VM runs the
-#   Elastic + Caldera + LocalStack Docker stack; the three Windows VMs are
+#   Elastic + Caldera Docker stack; the three Windows VMs are
 #   the attack targets / domain.
 #
 # VM inventory:
 #   192.168.56.10  docker-host    Ubuntu 22.04  — Docker Compose stack
 #                                                 (Elasticsearch, Kibana,
-#                                                  Fleet Server, Caldera,
-#                                                  LocalStack, Filebeat)
+#                                                  Fleet Server, Caldera)
 #   192.168.56.20  win11-victim   Windows 11    — Victim workstation
 #   192.168.56.50  win-dc         WinSrv 2022   — Active Directory DC (lab.local)
 #   192.168.56.51  win-server     WinSrv 2022   — Domain member server
@@ -18,8 +17,6 @@
 # Service endpoints (reachable at docker-host = 192.168.56.10):
 #   :9200 / :5601 / :8220  — Elasticsearch + Kibana + Fleet Server
 #   :8888                  — MITRE Caldera C2
-#   :4566                  — LocalStack
-#   :8889 / :8000          — Velociraptor GUI / client comms (DFIR)
 #
 # Provisioning order:
 #   1. docker-host    — installs Docker, runs docker/setup.sh inside the VM,
@@ -43,8 +40,10 @@ Vagrant.configure("2") do |config|
 
   # Disable automatic box update checks for reproducibility
   config.vm.box_check_update = false
+  # Bound stalled downloads on either host OS without limiting healthy large transfers.
+  config.vm.box_download_options = { "connect-timeout" => "30", "speed-time" => "120", "speed-limit" => "1024" }
 
-  # ── Docker Host (Linux VM running the SIEM/C2/Cloud stack) ────────────────────
+  # ── Docker Host (Linux VM running the SIEM/Caldera stack) ────────────────────
   # Provisioned first. The /vagrant synced folder maps the repo root, so
   # docker/setup.sh inside the VM writes fleet-enrollment-token.txt and
   # elastic-credentials.txt back to the host's repo root for the Windows VMs.
@@ -182,15 +181,6 @@ Vagrant.configure("2") do |config|
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
-    # Install Velociraptor client (repacked w/ embedded server config) as a service
-    dc.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
-      $ErrorActionPreference = "Stop"
-      $ProgressPreference = "SilentlyContinue"
-      $LASTEXITCODE = 0
-      & "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
-      if (-not $?) { exit 1 }
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    POWERSHELL
 
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     dc.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
@@ -198,6 +188,16 @@ Vagrant.configure("2") do |config|
       $ProgressPreference = "SilentlyContinue"
       $LASTEXITCODE = 0
       & "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    POWERSHELL
+
+    # Prepare the workshop evidence directory and Sysmon file-creation rule.
+    dc.vm.provision "shell", name: "prepare_workshop", privileged: false, inline: <<~POWERSHELL
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\prepare_workshop.ps1"
       if (-not $?) { exit 1 }
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
@@ -268,16 +268,7 @@ Vagrant.configure("2") do |config|
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
-    # Pre-stage decoy "Finance" share for the DFIR-RansomHub-2025-Lab scenario.
     # Idempotent — re-running just refreshes the contents.
-    srv.vm.provision "shell", name: "seed_ransomhub_decoy", privileged: false, inline: <<~POWERSHELL
-      $ErrorActionPreference = "Stop"
-      $ProgressPreference = "SilentlyContinue"
-      $LASTEXITCODE = 0
-      & "C:\\vagrant\\scripts\\scenarios\\ransomhub\\seed_decoy_data.ps1"
-      if (-not $?) { exit 1 }
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    POWERSHELL
 
     # Deploy Caldera sandcat agent automatically during provisioning
     srv.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~POWERSHELL
@@ -291,15 +282,6 @@ Vagrant.configure("2") do |config|
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
-    # Install Velociraptor client (repacked w/ embedded server config) as a service
-    srv.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
-      $ErrorActionPreference = "Stop"
-      $ProgressPreference = "SilentlyContinue"
-      $LASTEXITCODE = 0
-      & "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
-      if (-not $?) { exit 1 }
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    POWERSHELL
 
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     srv.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
@@ -307,6 +289,16 @@ Vagrant.configure("2") do |config|
       $ProgressPreference = "SilentlyContinue"
       $LASTEXITCODE = 0
       & "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    POWERSHELL
+
+    # Prepare the workshop evidence directory and Sysmon file-creation rule.
+    srv.vm.provision "shell", name: "prepare_workshop", privileged: false, inline: <<~POWERSHELL
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\prepare_workshop.ps1"
       if (-not $?) { exit 1 }
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
@@ -387,15 +379,6 @@ Vagrant.configure("2") do |config|
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
-    # Install Velociraptor client (repacked w/ embedded server config) as a service
-    win.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
-      $ErrorActionPreference = "Stop"
-      $ProgressPreference = "SilentlyContinue"
-      $LASTEXITCODE = 0
-      & "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
-      if (-not $?) { exit 1 }
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    POWERSHELL
 
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     win.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
@@ -403,6 +386,16 @@ Vagrant.configure("2") do |config|
       $ProgressPreference = "SilentlyContinue"
       $LASTEXITCODE = 0
       & "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    POWERSHELL
+
+    # Prepare the workshop evidence directory and Sysmon file-creation rule.
+    win.vm.provision "shell", name: "prepare_workshop", privileged: false, inline: <<~POWERSHELL
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\prepare_workshop.ps1"
       if (-not $?) { exit 1 }
       if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL

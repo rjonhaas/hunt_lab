@@ -15,7 +15,7 @@ docker/cloudtrail/
 # (named volume + docker cp staging from docker/docker-compose.yml)
 docker/velociraptor/
 
-# Python bytecode from the benchmark harness scripts
+# Python bytecode
 __pycache__/
 
 # Generated environment summary contains lab credentials
@@ -23,3 +23,6 @@ lab-info.md
 
 # Local provisioning logs may contain lab details
 .setup-logs/
+
+# Optional instructor-supplied workshop flags/configuration and local evidence
+.war-wagon/

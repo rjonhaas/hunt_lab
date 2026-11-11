@@ -10,9 +10,8 @@
 #   4. Configure Fleet default output (points at the real Elasticsearch IP)
 #   5. Wait for Fleet API, fetch Windows enrollment token
 #   6. Write fleet-enrollment-token.txt + patch FLEET_SERVER_SERVICE_TOKEN into .env
-#   7. Seed LocalStack baseline resources (S3 buckets, IAM users)
-#   8. Push DFIR-RansomHub-2025-Lab + Identity-Chain abilities into Caldera
-#   9. Import Hunt Lab detection rules into Kibana
+#   7. Preload WW-TRAIN-001 abilities and adversary (no execution)
+#   8. Create the War Wagon logs data view
 
 set -euo pipefail
 
@@ -359,141 +358,23 @@ echo "${ENROLL_TOKEN}" > "${TOKEN_FILE}"
 chmod 600 "${TOKEN_FILE}"
 log "Fleet enrollment token written to repo root: fleet-enrollment-token.txt"
 
-# ── 8. Seed LocalStack baseline resources ────────────────────────────────────
-# Install awscli-local unconditionally — the bootstrap image is python:3.11-slim
-# and ships with neither awslocal nor awscli-local pre-installed, so the old
-# `if command -v awslocal || pip show awscli-local` guard short-circuited to
-# false on every run and the LocalStack seeding (including the RansomHub
-# exfil destination bucket) was silently skipped.
-pip install -q awscli-local 2>/dev/null || true
-if true; then
-  export AWS_ACCESS_KEY_ID=test
-  export AWS_SECRET_ACCESS_KEY=test
-  export AWS_DEFAULT_REGION=us-east-1
-
-  LOCALSTACK_READY=0
-  for i in $(seq 1 20); do
-    if curl -sf "http://localstack:4566/_localstack/health" \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('services',{}).get('s3')=='running' else 1)" 2>/dev/null; then
-      LOCALSTACK_READY=1; break
-    fi
-    sleep 5
-  done
-
-  if [[ "${LOCALSTACK_READY}" -eq 1 ]]; then
-    log "Seeding LocalStack baseline resources..."
-    awslocal s3 mb s3://company-financials 2>/dev/null || true
-    awslocal s3 mb s3://hr-data 2>/dev/null || true
-    awslocal s3 mb s3://cloudtrail-logs 2>/dev/null || true
-    # Exfil destination for the DFIR-RansomHub-2025-Lab scenario
-    awslocal s3 mb s3://ransomhub-exfil-lab 2>/dev/null || true
-    awslocal s3api put-bucket-tagging --bucket ransomhub-exfil-lab \
-      --tagging 'TagSet=[{Key=hunt-lab,Value=ransomhub-recreation}]' 2>/dev/null || true
-    echo '{"ssn":"123-45-6789","name":"John Doe","salary":150000}' \
-      | awslocal s3 cp - s3://hr-data/employees/john_doe.json 2>/dev/null || true
-    echo '{"q4_revenue":42000000,"projections":"confidential"}' \
-      | awslocal s3 cp - s3://company-financials/2025-q4-report.json 2>/dev/null || true
-    awslocal iam create-user --user-name analyst-readonly 2>/dev/null || true
-    awslocal iam create-user --user-name dev-ops 2>/dev/null || true
-    awslocal iam attach-user-policy --user-name analyst-readonly \
-      --policy-arn arn:aws:iam::aws:policy/ReadOnlyAccess 2>/dev/null || true
-    awslocal iam attach-user-policy --user-name dev-ops \
-      --policy-arn arn:aws:iam::aws:policy/IAMFullAccess 2>/dev/null || true
-    awslocal cloudtrail create-trail \
-      --name hunt-lab-trail --s3-bucket-name cloudtrail-logs \
-      --is-multi-region-trail 2>/dev/null || true
-    awslocal cloudtrail start-logging --name hunt-lab-trail 2>/dev/null || true
-    log "LocalStack baseline resources seeded."
-  else
-    log "WARNING: LocalStack not ready — skipping resource seeding. Re-run bootstrap to retry."
-  fi
-fi
-
-# ── 9. Push RansomHub recreation into Caldera ────────────────────────────────
-# Wait for Caldera's REST API, then upsert the abilities + adversary so a fresh
-# clone arrives with the DFIR-RansomHub-2025-Lab adversary already in the UI.
-# Idempotent — re-runs just refresh the existing objects.
+# ── Workshop abilities, profile and Kibana data view ─────────────────────────
 log "Waiting for Caldera REST API (up to 180s)..."
 CALDERA_READY=0
 for i in $(seq 1 36); do
-  if curl -sf --max-time 5 -H "KEY: ADMIN123" \
-      "http://caldera:8888/api/v2/health" -o /dev/null 2>/dev/null; then
+  if curl -sf --max-time 5 -H "KEY: ADMIN123" "http://caldera:8888/api/v2/health" -o /dev/null; then
     CALDERA_READY=1; break
   fi
   sleep 5
 done
+[[ "$CALDERA_READY" -eq 1 ]] || die "Caldera not ready; workshop profile was not loaded."
+CALDERA_URL="http://caldera:8888" CALDERA_API_KEY="ADMIN123" \
+  python3 /workspace/workshops/war-wagon/scenario/preload.py
+log "Workshop abilities and profile verified. No operation started."
 
-if [[ "${CALDERA_READY}" -eq 1 ]]; then
-  log "Pushing DFIR-RansomHub-2025-Lab abilities + adversary to Caldera..."
-  if CALDERA_URL="http://caldera:8888" \
-     python3 /workspace/scripts/caldera_ransomhub_setup.py; then
-    log "RansomHub recreation seeded into Caldera."
-  else
-    log "WARNING: caldera_ransomhub_setup.py reported errors — check above."
-  fi
-
-  log "Pushing Identity-Chain-2025-Lab abilities + adversary to Caldera..."
-  if CALDERA_URL="http://caldera:8888" \
-     python3 /workspace/scripts/caldera_identity_setup.py; then
-    log "Identity chain seeded into Caldera."
-  else
-    log "WARNING: caldera_identity_setup.py reported errors — check above."
-  fi
-else
-  log "WARNING: Caldera REST API not ready — skipping ability seeding."
-  log "  Re-run manually with:"
-  log "    python3 scripts/caldera_ransomhub_setup.py"
-  log "    python3 scripts/caldera_identity_setup.py"
+# Stable, shared data view for the attendee guide. Existing views are preserved.
+if ! kb_api "${KB_URL}/api/data_views/data_view/war-wagon-logs" >/dev/null; then
+  kb_api -X POST "${KB_URL}/api/data_views/data_view" \
+    -d '{"data_view":{"id":"war-wagon-logs","title":"logs-*","name":"War Wagon logs","timeFieldName":"@timestamp","allowNoIndex":true}}' >/dev/null
 fi
-
-# ── 10. Import Hunt Lab detection rules ──────────────────────────────────────
-# Imports the curated rule set under kibana/detection_rules/ so alerts fire as
-# soon as the Caldera abilities run. Idempotent — overwrite=true rewrites by
-# rule_id on every bootstrap. Failures are non-fatal so a Kibana hiccup doesn't
-# break the whole stack-up.
-RULES_DIR="/workspace/kibana/detection_rules"
-if compgen -G "${RULES_DIR}/*.ndjson" > /dev/null; then
-  log "Initializing detection engine signals index..."
-  curl -sf -u "elastic:${ELASTIC_PASSWORD}" \
-    -H "kbn-xsrf: true" \
-    -X POST "${KB_URL}/api/detection_engine/index" \
-    > /dev/null 2>&1 || true
-
-  for ndjson in "${RULES_DIR}"/*.ndjson; do
-    name=$(basename "${ndjson}")
-    log "Importing detection rules: ${name}"
-    HTTP=$(curl -s -o /tmp/rule-import.out -w "%{http_code}" \
-      -u "elastic:${ELASTIC_PASSWORD}" \
-      -H "kbn-xsrf: true" \
-      -X POST "${KB_URL}/api/detection_engine/rules/_import?overwrite=true&overwrite_exceptions=true&overwrite_action_connectors=true" \
-      -F "file=@${ndjson}")
-    if [[ "${HTTP}" == "200" ]]; then
-      SUMMARY=$(python3 -c "
-import json, sys
-d = json.load(open('/tmp/rule-import.out'))
-print(f\"  imported={d.get('rules_count',0)} success={d.get('success',False)} errors={len(d.get('errors',[]))}\")
-for e in d.get('errors', [])[:5]:
-    print(f\"  ! {e.get('rule_id','?')}: {e.get('error',{}).get('message','')[:160]}\")
-" 2>/dev/null || cat /tmp/rule-import.out)
-      log "${SUMMARY}"
-    else
-      log "WARNING: rule import returned HTTP ${HTTP} — skipping"
-      head -c 400 /tmp/rule-import.out 2>/dev/null || true
-    fi
-  done
-else
-  log "No detection rule NDJSON files found under ${RULES_DIR} — skipping."
-fi
-
-# ── Done ──────────────────────────────────────────────────────────────────────
-log ""
-log "================================================================="
-log "  Bootstrap complete!"
-log "  Kibana:        http://${HOST_IP}:5601   (elastic / ${ELASTIC_PASSWORD})"
-log "  Caldera:       http://${HOST_IP}:8888   (admin / HuntLab2026!)"
-log "  Fleet Server:  http://${HOST_IP}:8220"
-log "  LocalStack:    http://${HOST_IP}:4566"
-log ""
-log "  Windows VMs:    run 'vagrant up win-dc win-server win11-victim --no-parallel'"
-log "  Enrollment token: fleet-enrollment-token.txt (repo root)"
-log "================================================================="
+log "Bootstrap complete: Fleet enrollment, War Wagon logs view and workshop profile ready."

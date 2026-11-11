@@ -14,7 +14,7 @@ Data view and displayed timezone:
 
 ## Before execution: translate the report
 
-| Report behavior | Command or ability proposed | Why it represents the behavior | Privileges / prerequisites | Expected evidence | Cleanup |
+| Report behavior | Prepared command or ability | Why it represents the behavior | Privileges / prerequisites | Expected evidence | Cleanup |
 |---|---|---|---|---|---|
 | User discovery | | | | | |
 | System discovery | | | | | |
@@ -31,7 +31,8 @@ What must succeed before staging can run?
 
 What would cause you to stop before execution?
 
-Hosted: record Joe's choices and your explanation. Local: record your own choices.
+Record the prepared profile and explain its choices. Hosted participants follow
+the instructor; local participants verify their own target and operation.
 
 ## After execution: compare predictions with evidence
 

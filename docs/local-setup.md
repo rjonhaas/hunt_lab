@@ -63,7 +63,7 @@ Both scripts do the same thing in the same order:
    back to the repo root via the synced `/vagrant` folder.
 4. `vagrant up win-dc` — promotes the DC, creates OUs/users, writes
    `domain-info.txt`, deploys agents.
-5. `vagrant up win-server` — joins domain, deploys agents, seeds the decoy
+5. `vagrant up win-server` — joins domain, deploys agents, prepares a synthetic
    `Finance` SMB share.
 6. `vagrant up win11-victim` — joins domain, deploys agents.
 
@@ -71,25 +71,25 @@ Both scripts do the same thing in the same order:
 large box downloads, Docker images, Windows reboots and enrollment. Cached-image
 rehearsals are not representative of a fresh participant download.
 
-Linux setup retries explicit download failures up to three times and saves logs
+Both setup scripts retry explicit download failures up to three times and save logs
 under `.setup-logs/`. WinRM connection failures trigger a bounded reload and retry of that VM.
 Other provisioning failures stop dependent machines.
 After fixing the reported cause, resume with `bash setup.sh --from win11-victim`
-on Linux
+on Linux or `.\setup.ps1 -From win11-victim` on Windows
 (or `docker-host`, `win-dc`, `win-server`). Earlier machines are not reprovisioned;
 required enrollment/domain files must still exist.
 
-On Linux, each machine has a three-hour limit, configurable with the positive integer
+Each machine has a three-hour limit, configurable with the positive integer
 `LAB_STAGE_TIMEOUT_SECONDS`. A timeout stops Vagrant, not the VM; check guest
 logs before retrying because a guest operation may still be finishing.
-Linux setup then checks services, agents and telemetry, retrying readiness five times
+Setup then checks services, agents and telemetry, retrying readiness five times
 before returning failure. It only reports success when those checks pass.
 Logs may contain lab details and are excluded from Git.
 
 Windows setup scripts run directly in the WinRM PowerShell session and propagate
 failures to Vagrant. WinRM requests use a five-minute timeout; individual Windows
 commands have a 30-minute execution limit. Each Windows VM finishes with checks
-for domain membership, Sysmon, Elastic Agent, Velociraptor, Sandcat and Atomic Red
+for domain membership, Sysmon, Elastic Agent, Sandcat and Atomic Red
 Team. These guest checks also run when using the Windows host setup script.
 
 If a step fails, fix the reported error and re-run that VM:
@@ -98,9 +98,9 @@ VMs in the order above. Running the whole setup script again reprovisions earlie
 VMs too. For a known tool-install failure, use a named provisioner instead, e.g.
 `vagrant provision win-server --provision-with install_atomic_red_team`.
 
-**Check readiness before class.** Linux setup runs this check automatically.
-Windows users must run it separately after provisioning. From the repository on
-either host, use Python already in the Ubuntu services VM:
+**Check readiness before class.** Both setup scripts run this check automatically;
+repeat it before the exercise. From the repository on either host, use Python
+already in the Ubuntu services VM:
 
 ```text
 vagrant status
@@ -109,7 +109,7 @@ vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py'
 
 It checks Elasticsearch, Kibana, online Fleet enrollment, recently seen trusted
 Caldera agents, and recent Sysmon events for **each** of `win-dc`, `win-server`,
-and `win11-victim`. Duplicate or stale agents cannot substitute for a missing
+and `win11-victim`, plus the preloaded workshop abilities/profile. Duplicate or stale agents cannot substitute for a missing
 host. It exits nonzero when readiness is incomplete. Allow a few minutes after
 provisioning for enrollment and ingestion, then retry. This does not run attacks
 or prove that detections work. Rehearse the selected workshop operation next.
@@ -158,11 +158,8 @@ exit code and redacted error text instead.
 |-------------------|----------------------------|-------------------------------------------|
 | Kibana (SIEM)     | http://192.168.56.10:5601  | `elastic` / see `elastic-credentials.txt` |
 | Caldera (C2)      | http://192.168.56.10:8888  | `admin` / `HuntLab2026!`                  |
-| Velociraptor (DFIR)| https://192.168.56.10:8889 | `admin` / `HuntLab2026!` (set in `docker/.env`, self-signed TLS) |
 | Fleet Server      | http://192.168.56.10:8220  | internal — used by Elastic Agent          |
-| LocalStack API    | http://192.168.56.10:4566  | local test credentials (`test` / `test`)  |
 | Elasticsearch API | http://192.168.56.10:9200  | same as Kibana                            |
-| Tracecat (SOAR)   | http://192.168.56.10:8089  | email set in `.env.tracecat` / password on first login (optional overlay) |
 | `win-dc` (RDP)    | 192.168.56.50              | `LAB\vagrant` / `vagrant`                 |
 | `win-server` (RDP)| 192.168.56.51              | `LAB\vagrant` / `vagrant`                 |
 | `win11-victim` (RDP) | 192.168.56.20           | `LAB\vagrant` / `vagrant`                 |
@@ -189,3 +186,23 @@ DC safe-mode (DSRM) password: `Vagrant123!`
 
 
 When readiness passes, continue with the [participant guide](../workshops/war-wagon/participant-guide.md).
+
+## Conference configuration
+
+The default build preloads the public practice profile. For conference flags,
+place the instructor-provided JSON at `.war-wagon/config.json` in the repo root
+before running setup. Both hosted and local labs must use the same flag values.
+See [instructor configuration](../workshops/war-wagon/instructor/README.md).
+
+## Existing labs
+
+Switching to this branch does not uninstall old containers, Windows tools or
+Caldera objects. An existing full lab is not a clean workshop-only installation.
+The setup scripts intentionally do not delete old data or unrelated scenarios.
+Use a fresh checkout and lab for the focused build; preserve evidence before
+retiring your old VMs. Do not run two labs using `192.168.56.0/24` simultaneously
+on the same host. Stop the old lab first.
+
+The focused build retains the previously tested VM resource allocations. Smaller
+requirements have not been validated. A fresh focused build and learner-account
+CTF rehearsal are still needed before declaring the workshop release-ready.

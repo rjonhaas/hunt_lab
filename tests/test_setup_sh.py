@@ -76,7 +76,7 @@ esac''')
         result, calls = self.run_setup()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([x for x in calls.splitlines() if x.startswith("up ")], [
-            f"up {name} --provider vmware_desktop --provision"
+            f"up {name} --provider vmware_desktop --provision --no-destroy-on-error"
             for name in ("docker-host", "win-dc", "win-server", "win11-victim")])
         self.assertIn("VM provisioning and core readiness checks passed", result.stdout)
 
