@@ -28,6 +28,12 @@ try {
         param($Arguments, $LogName, $TimeoutSeconds)
         $script:calls += ($Arguments -join ' ')
         $message = ''
+        if ($Arguments[0] -eq 'status') {
+            $state = if ($script:mode -eq 'missing') { 'not_created' } else { 'poweroff' }
+            Set-Content (Join-Path $LogDir "$LogName.stdout.log") "1,$($Arguments[1]),state,$state"
+            Set-Content (Join-Path $LogDir "$LogName.stderr.log") ''
+            return 0
+        }
         if ($script:mode -eq 'fatal') { $message = 'guest script failed' }
         elseif ($script:calls.Count -eq 1 -and $script:mode -eq 'winrm_raw') { $message = "execution expired (Timeout::Error)`nfrom plugins/communicators/winrm/communicator.rb:109" }
         elseif ($script:mode -eq '503') { $message = 'error while downloading the metadata. URL returned error: 503' }
@@ -38,8 +44,16 @@ try {
         Set-Content (Join-Path $LogDir "$LogName.stderr.log") ''
         if ($message) { return 23 }; return 0
     }
+    $script:mode = 'success'
     Invoke-LabMachine 'docker-host'
-    Assert ($script:calls.Count -eq 0) 'Resume did not skip earlier machines.'
+    Assert ($script:calls.Count -eq 2 -and $script:calls[1] -match '--no-provision') 'Resume did not start prerequisite without provisioning.'
+    $script:calls = @(); $script:mode = 'fatal'; $failed = $false
+    try { Invoke-LabMachine 'win-dc' } catch { $failed = $true }
+    Assert ($failed -and $script:calls.Count -eq 2) 'Prerequisite startup failure was swallowed.'
+    $script:calls = @(); $script:mode = 'missing'; $failed = $false
+    try { Invoke-LabMachine 'win-dc' } catch { $failed = $_.Exception.Message -match 'Resume: .\\setup.ps1 -From win-dc' }
+    Assert ($failed -and $script:calls.Count -eq 1) 'Missing prerequisite was created without provisioning.'
+    $script:calls = @(); $script:mode = 'download'
     Invoke-LabMachine 'win11-victim'
     Assert ($script:calls.Count -eq 2) 'Download was not retried.'
     $script:calls = @(); $script:mode = 'winrm'

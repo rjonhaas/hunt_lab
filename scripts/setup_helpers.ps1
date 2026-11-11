@@ -39,13 +39,24 @@ function Invoke-VagrantProcess {
 
 function Invoke-LabMachine {
     param([string]$Machine)
+    $provisionMode = '--provision'
     if ([array]::IndexOf($MachineOrder, $Machine) -lt [array]::IndexOf($MachineOrder, $From)) {
-        Write-Log "Skipping completed machine $Machine (resume from $From)."
-        return
+        $statusName = "$Machine-resume-state"
+        $statusCode = Invoke-VagrantProcess -Arguments @('status', $Machine, '--machine-readable') -LogName $statusName -TimeoutSeconds 60
+        if ($statusCode -ne 0) { throw "Cannot inspect prerequisite $Machine. Logs: $LogDir. Resume: .\setup.ps1 -From $Machine" }
+        $statePattern = '^\d+,' + [regex]::Escape($Machine) + ',state,([^,]+)$'
+        $machineState = @(Get-Content (Join-Path $LogDir "$statusName.stdout.log") | ForEach-Object {
+            if ($_ -match $statePattern) { $Matches[1].Trim() }
+        })
+        if ($machineState.Count -ne 1 -or $machineState[0] -in @('not_created', 'unknown', '')) {
+            throw "Prerequisite $Machine is missing or its state is unknown. Resume: .\setup.ps1 -From $Machine"
+        }
+        Write-Log "Starting prerequisite $Machine without provisioning (resume from $From)."
+        $provisionMode = '--no-provision'
     }
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         $name = "$Machine-attempt-$attempt"
-        $code = Invoke-VagrantProcess -Arguments @('up', $Machine, '--provider', 'vmware_desktop', '--provision', '--no-destroy-on-error') -LogName $name -TimeoutSeconds $StageTimeout
+        $code = Invoke-VagrantProcess -Arguments @('up', $Machine, '--provider', 'vmware_desktop', $provisionMode, '--no-destroy-on-error') -LogName $name -TimeoutSeconds $StageTimeout
         if ($code -eq 0) { return }
         $text = Get-Content (Join-Path $LogDir "$name.*.log") -Raw
         if ($attempt -lt 3 -and -not ($text -match 'URL returned error: (401|403|404)') -and ($text -match 'error occurred while downloading|error while downloading the metadata|Could not resolve host|Failed to connect|SSL connect error')) {

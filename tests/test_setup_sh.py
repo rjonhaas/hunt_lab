@@ -36,6 +36,7 @@ case "$1" in
  plugin) printf 'other-plugin (1.0)\\nvagrant-vmware-desktop (3.0.5)\\n';;
  validate) exit 0;;
  reload) exit 0;;
+ status) if [ "$2" = "${MISSING_VM:-}" ]; then echo "1,$2,state,not_created"; else echo "1,$2,state,poweroff"; fi;;
  ssh) [ "${FAIL_READINESS:-}" != yes ] || exit 1;;
  up)
   if [ "$2" = "${DOWNLOAD_FAIL_VM:-}" ] && [ ! -f download-retried ]; then
@@ -112,14 +113,30 @@ esac''')
         self.assertEqual(calls.count("up win11-victim"), 2)
         self.assertEqual(calls.count("reload win11-victim"), 1)
 
-    def test_resume_skips_completed_machines(self):
+    def test_resume_starts_dependencies_without_reprovisioning(self):
         for name in ("elastic-credentials.txt", "fleet-enrollment-token.txt", "domain-info.txt"):
             (self.repo / name).write_text("test-only")
         result, calls = self.run_setup(args=("--from", "win11-victim"))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("up docker-host", calls)
+        for name in ("docker-host", "win-dc", "win-server"):
+            self.assertIn(f"up {name} --provider vmware_desktop --no-provision --no-destroy-on-error", calls)
+        self.assertIn("up win11-victim --provider vmware_desktop --provision", calls)
+
+    def test_resume_stops_when_dependency_cannot_start(self):
+        for name in ("elastic-credentials.txt", "fleet-enrollment-token.txt", "domain-info.txt"):
+            (self.repo / name).write_text("test-only")
+        result, calls = self.run_setup(args=("--from", "win11-victim"), FAIL_VM="win-dc")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("up win11-victim", calls)
+
+    def test_resume_rejects_missing_dependency_with_stale_artifacts(self):
+        for name in ("elastic-credentials.txt", "fleet-enrollment-token.txt", "domain-info.txt"):
+            (self.repo / name).write_text("stale")
+        result, calls = self.run_setup(args=("--from", "win11-victim"), MISSING_VM="win-dc")
+        self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("up win-dc", calls)
-        self.assertIn("up win11-victim", calls)
+        self.assertNotIn("up win11-victim", calls)
+        self.assertIn("bash setup.sh --from win-dc", result.stderr)
 
     def test_failed_readiness_is_not_success(self):
         result, calls = self.run_setup(FAIL_READINESS="yes")

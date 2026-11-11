@@ -137,12 +137,12 @@ umask 077
 LOG_DIR="$SCRIPT_DIR/.setup-logs/$(date +%Y%m%d-%H%M%S)-$$"
 mkdir -p "$LOG_DIR"
 run_machine() {
-  local machine="$1" attempt rc logfile
+  local machine="$1" mode="${2:---provision}" attempt rc logfile
   CURRENT_STAGE="$machine"
   for attempt in 1 2 3; do
     logfile="$LOG_DIR/$machine-attempt-$attempt.log"
     log "Building $machine (attempt $attempt/3); log: $logfile"
-    if timeout --kill-after=30 "$STAGE_TIMEOUT" vagrant up "$machine" --provider vmware_desktop --provision --no-destroy-on-error 2>&1 | tee "$logfile"; then
+    if timeout --kill-after=30 "$STAGE_TIMEOUT" vagrant up "$machine" --provider vmware_desktop "$mode" --no-destroy-on-error 2>&1 | tee "$logfile"; then
       return 0
     else
       rc=${PIPESTATUS[0]}
@@ -176,6 +176,17 @@ for machine in docker-host win-dc win-server win11-victim; do
   if $started; then
     run_machine "$machine"
     log "$machine provisioning completed."
+  else
+    state_log="$LOG_DIR/$machine-resume-state.log"
+    if ! timeout --kill-after=30 60 vagrant status "$machine" --machine-readable >"$state_log" 2>&1; then
+      die "Cannot inspect prerequisite $machine. Log: $state_log. Resume: bash setup.sh --from $machine"
+    fi
+    machine_state=$(awk -F, -v machine="$machine" '$2 == machine && $3 == "state" {print $4}' "$state_log")
+    case "$machine_state" in
+      ""|not_created|unknown) die "Prerequisite $machine is missing or its state is unknown. Resume: bash setup.sh --from $machine" ;;
+    esac
+    log "Starting prerequisite $machine without provisioning (resume from $START_AT)."
+    run_machine "$machine" --no-provision
   fi
 done
 

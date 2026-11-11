@@ -43,6 +43,15 @@ Vagrant.configure("2") do |config|
   # Bound stalled downloads on either host OS without limiting healthy large transfers.
   config.vm.box_download_options = { "connect-timeout" => "30", "speed-time" => "120", "speed-limit" => "1024" }
 
+  # On Windows hosts, vmrun can return the host-only lab IP after provisioning.
+  # VMware NAT port forwards then target the wrong subnet and WinRM reconnects
+  # fail. Look up the NAT adapter's DHCP lease by MAC instead.
+  if Vagrant::Util::Platform.windows?
+    config.vm.provider "vmware_desktop" do |v|
+      v.enable_vmrun_ip_lookup = false
+    end
+  end
+
   # ── Docker Host (Linux VM running the SIEM/Caldera stack) ────────────────────
   # Provisioned first. The /vagrant synced folder maps the repo root, so
   # docker/setup.sh inside the VM writes fleet-enrollment-token.txt and

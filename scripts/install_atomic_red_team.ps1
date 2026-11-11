@@ -4,7 +4,7 @@
 #
 # Installs to: C:\AtomicRedTeam\
 #   invoke-atomicredteam\  -- PowerShell module
-#   atomics\               -- ATT&CK technique YAML definitions + payloads
+#   atomics\               -- ATT&CK technique YAML definitions (no payload download)
 
 param()
 
@@ -16,6 +16,46 @@ $ErrorActionPreference = "Stop"
 function Write-Log {
     param([string]$Message)
     Write-Host "[art] $Message"
+}
+
+function Invoke-InstallRetry {
+    param([string]$Step, [scriptblock]$Action)
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Write-Log "$Step (attempt $attempt/3)..."
+            & $Action
+            return
+        } catch {
+            Write-Log "$Step failed: $($_.Exception.Message)"
+            if ($attempt -eq 3) { throw }
+            Start-Sleep -Seconds (10 * $attempt)
+        }
+    }
+}
+
+function Test-AtomicInstallation {
+    # A previous installer failure can leave just the module behind.
+    $module = 'C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1'
+    $definition = 'C:\AtomicRedTeam\atomics\T1059.001\T1059.001.yaml'
+    return ((Test-Path $module -PathType Leaf) -and (Test-Path $definition -PathType Leaf))
+}
+
+function Install-YamlDependency {
+    if (Get-Module -ListAvailable powershell-yaml) { return }
+    Invoke-InstallRetry 'Installing powershell-yaml dependency' {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+            Register-PSRepository -Default -ErrorAction Stop
+        }
+        if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue |
+                Where-Object { $_.Version -ge [version]'2.8.5.201' })) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop | Out-Null
+        }
+        Install-Module -Name powershell-yaml -Repository PSGallery -Scope AllUsers -Force -ErrorAction Stop
+        if (-not (Get-Module -ListAvailable powershell-yaml)) {
+            throw 'powershell-yaml is still unavailable after installation.'
+        }
+    }
 }
 
 function Publish-YamlDependency {
@@ -44,52 +84,63 @@ function Publish-YamlDependency {
     Write-Log "Verified ART import; powershell-yaml is available in the all-users module directory."
 }
 
-# Exclude ART directory from Defender so payloads are not quarantined
-Write-Log "Adding Defender exclusion for C:\AtomicRedTeam..."
 try {
-    Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-    Add-MpPreference -ExclusionPath "C:\AtomicRedTeam" -ErrorAction SilentlyContinue
-    Write-Log "Exclusion added."
+    # Exclude ART directory from Defender so payloads are not quarantined
+    Write-Log "Adding Defender exclusion for C:\AtomicRedTeam..."
+    try {
+        Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+        Add-MpPreference -ExclusionPath "C:\AtomicRedTeam" -ErrorAction SilentlyContinue
+        Write-Log "Exclusion added."
+    } catch {
+        Write-Log "WARNING: Could not configure Defender exclusion: $_"
+    }
+
+    Install-YamlDependency
+
+    # Skip only a complete installation; repair partial installs left by a failed download.
+    if (Test-AtomicInstallation) {
+        Write-Log "Invoke-AtomicRedTeam already installed - verifying shared dependency."
+        try {
+            Publish-YamlDependency
+            exit 0
+        } catch {
+            Write-Log "Existing ART installation failed validation; repairing it. $($_.Exception.Message)"
+        }
+    }
+
+    $installerUrl = "https://raw.githubusercontent.com/redcanaryco/invoke-atomicredteam/master/install-atomicredteam.ps1"
+    $script:installerContent = $null
+    Invoke-InstallRetry 'Downloading Invoke-AtomicRedTeam installer' {
+        $script:installerContent = (Invoke-WebRequest -Uri $installerUrl -UseBasicParsing -TimeoutSec 120).Content
+    }
+    Invoke-Expression $script:installerContent
+
+    Write-Log "Installing Invoke-AtomicRedTeam with all atomics (this takes 2-5 minutes)..."
+    Invoke-InstallRetry 'Installing module and atomic definitions' {
+        Install-AtomicRedTeam -getAtomics -Force -NoPayloads
+        if (-not (Test-AtomicInstallation)) {
+            throw 'Atomic Red Team installation is incomplete: module or T1059.001 definition missing.'
+        }
+        Publish-YamlDependency
+    }
+
+    $atomicCount = (Get-ChildItem "C:\AtomicRedTeam\atomics" -Directory -ErrorAction SilentlyContinue).Count
+    Write-Log ""
+    Write-Log "============================================================"
+    Write-Log "  Atomic Red Team installed!"
+    Write-Log "  Module:   C:\AtomicRedTeam\invoke-atomicredteam"
+    Write-Log "  Atomics:  C:\AtomicRedTeam\atomics  ($atomicCount techniques)"
+    Write-Log ""
+    Write-Log "  Usage:"
+    Write-Log "  Import-Module C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1"
+    Write-Log "  Invoke-AtomicTest T1059.001 -ShowDetailsBrief"
+    Write-Log "  Invoke-AtomicTest T1059.001 -TestNumbers 1"
+    Write-Log "============================================================"
+
 } catch {
-    Write-Log "WARNING: Could not configure Defender exclusion: $_"
-}
-
-# Skip if already installed
-if (Test-Path "C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1") {
-    Write-Log "Invoke-AtomicRedTeam already installed - verifying shared dependency."
-    Publish-YamlDependency
+    Write-Log "ERROR: Atomic Red Team provisioning failed. See $LogFile. $($_.Exception.Message)"
+    throw
+} finally {
     Stop-Transcript
-    exit 0
 }
-
-Write-Log "Downloading Invoke-AtomicRedTeam installer..."
-$installerUrl = "https://raw.githubusercontent.com/redcanaryco/invoke-atomicredteam/master/install-atomicredteam.ps1"
-$installerContent = (Invoke-WebRequest -Uri $installerUrl -UseBasicParsing).Content
-Invoke-Expression $installerContent
-
-Write-Log "Installing Invoke-AtomicRedTeam with all atomics (this takes 2-5 minutes)..."
-Install-AtomicRedTeam -getAtomics -Force -NoPayloads
-
-# Verify
-if (-not (Test-Path "C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1")) {
-    Write-Error "Installation failed - module file not found after install."
-    exit 1
-}
-
-Publish-YamlDependency
-
-$atomicCount = (Get-ChildItem "C:\AtomicRedTeam\atomics" -Directory -ErrorAction SilentlyContinue).Count
-Write-Log ""
-Write-Log "============================================================"
-Write-Log "  Atomic Red Team installed!"
-Write-Log "  Module:   C:\AtomicRedTeam\invoke-atomicredteam"
-Write-Log "  Atomics:  C:\AtomicRedTeam\atomics  ($atomicCount techniques)"
-Write-Log ""
-Write-Log "  Usage:"
-Write-Log "  Import-Module C:\AtomicRedTeam\invoke-atomicredteam\Invoke-AtomicRedTeam.psd1"
-Write-Log "  Invoke-AtomicTest T1059.001 -ShowDetailsBrief"
-Write-Log "  Invoke-AtomicTest T1059.001 -TestNumbers 1"
-Write-Log "============================================================"
-
-Stop-Transcript
 exit 0
