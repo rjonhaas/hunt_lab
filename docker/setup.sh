@@ -51,14 +51,28 @@ if [[ -z "${HOST_IP}" || "${HOST_IP}" == "192.168.1.100" ]]; then
 fi
 log "HOST_IP: ${HOST_IP}"
 
+# Registry and DNS failures can be transient. Limit retries to image operations;
+# bootstrap/provisioning errors must still stop setup with their original logs.
+retry_image_operation() {
+  local attempt
+  for attempt in 1 2 3; do
+    if "$@"; then return 0; fi
+    if [[ "$attempt" -eq 3 ]]; then
+      die "Image operation failed after three attempts: $*"
+    fi
+    warn "Image operation failed; retrying in $((attempt * 10)) seconds ($attempt/3)."
+    sleep "$((attempt * 10))"
+  done
+}
+
 # ── 3. Pull images ────────────────────────────────────────────────────────────
 log "Pulling Docker images (this may take a few minutes on first run)..."
 # caldera is built locally (image hunt-lab/caldera:local) and has no registry
 # source, so it cannot be pulled. Compose v2.15+ errors on buildable services
 # during `pull`, so skip them here and build caldera explicitly afterward.
-docker compose pull --ignore-buildable
+retry_image_operation docker compose pull --ignore-buildable
 log "Building local images (caldera)..."
-docker compose build caldera
+retry_image_operation docker compose build caldera
 
 # ── 4. Start core services (Elastic + Caldera) ───────────────────
 log "Starting Elasticsearch, Kibana, Caldera..."
