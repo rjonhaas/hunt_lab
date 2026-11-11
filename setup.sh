@@ -6,7 +6,8 @@
 #
 # Prerequisites (must be manually installed before running this script):
 #   - VMware Workstation Pro (x86-64 Linux)
-#   - Vagrant                             https://developer.hashicorp.com/vagrant/install
+#   - Git (to clone this repository)
+# Vagrant is installed automatically on Debian/Ubuntu-based Linux when missing.
 #   - vagrant-vmware-desktop plugin       (installed automatically below)
 #
 # Usage:
@@ -18,6 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
 UTILITY_VERSION="1.0.22"
+VAGRANT_VERSION_TO_INSTALL="2.4.9"
+VAGRANT_DEB_SHA256="42d830d05e6e9e647f8a5c854d9f5295e319dac74edd37d54b97b4f29cbbd70d"
 PLUGIN_NAME="vagrant-vmware-desktop"
 
 RED="\033[0;31m"; YELLOW="\033[1;33m"; GREEN="\033[0;32m"; NC="\033[0m"
@@ -51,7 +54,25 @@ log "VMware found."
 
 # ── 2. Check Vagrant ──────────────────────────────────────────────────────────
 log "Checking Vagrant..."
-command -v vagrant &>/dev/null || die "Vagrant is not installed.\n  Install: https://developer.hashicorp.com/vagrant/install"
+if ! command -v vagrant &>/dev/null; then
+  command -v apt-get >/dev/null && command -v dpkg >/dev/null ||
+    die "Automatic Vagrant installation supports Debian/Ubuntu-based Linux. Install Vagrant from https://developer.hashicorp.com/vagrant/install and rerun setup."
+  command -v sha256sum >/dev/null || die "Install coreutils (sha256sum) and rerun setup."
+  log "Installing Vagrant ${VAGRANT_VERSION_TO_INSTALL} from HashiCorp..."
+  VAGRANT_DOWNLOAD_DIR=$(mktemp -d)
+  trap 'rm -rf -- "$VAGRANT_DOWNLOAD_DIR"' EXIT
+  VAGRANT_DEB_FILE="${VAGRANT_DOWNLOAD_DIR}/vagrant_${VAGRANT_VERSION_TO_INSTALL}-1_amd64.deb"
+  curl -fL --retry 3 --progress-bar \
+    "https://releases.hashicorp.com/vagrant/${VAGRANT_VERSION_TO_INSTALL}/vagrant_${VAGRANT_VERSION_TO_INSTALL}-1_amd64.deb" \
+    -o "$VAGRANT_DEB_FILE"
+  printf '%s  %s\n' "$VAGRANT_DEB_SHA256" "$VAGRANT_DEB_FILE" | sha256sum --check --status ||
+    die "Vagrant download failed checksum verification; nothing was installed."
+  sudo apt-get install -y "$VAGRANT_DEB_FILE"
+  hash -r
+  command -v vagrant >/dev/null || die "Vagrant installation finished but vagrant is not on PATH. Open a new terminal and rerun setup."
+  rm -rf -- "$VAGRANT_DOWNLOAD_DIR"
+  trap - EXIT
+fi
 VAGRANT_VERSION=$(vagrant --version)
 log "${VAGRANT_VERSION} found."
 

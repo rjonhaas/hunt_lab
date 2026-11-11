@@ -77,6 +77,40 @@ esac''')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, "")
 
+    def prepare_missing_vagrant(self):
+        (self.bin / "vagrant").rename(self.bin / "vagrant-pending")
+        self.stub("dpkg", "exit 0")
+        self.stub("sudo", 'exec "$@"')
+        self.stub("curl", '''while [ "$#" -gt 0 ]; do
+ if [ "$1" = -o ]; then shift; printf test-package > "$1"; fi
+ shift
+done''')
+        self.stub("sha256sum", 'cat >/dev/null; [ "${BAD_CHECKSUM:-}" != yes ]')
+        self.stub("apt-get", '''echo "$*" >> install-calls.txt
+[ "${FAIL_INSTALL:-}" != yes ] || exit 100
+mv bin/vagrant-pending bin/vagrant''')
+
+    def test_missing_vagrant_installed_before_build(self):
+        self.prepare_missing_vagrant()
+        result, calls = self.run_setup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("vagrant_2.4.9-1_amd64.deb", (self.repo / "install-calls.txt").read_text())
+        self.assertIn("up docker-host", calls)
+
+    def test_bad_download_never_installs_or_builds(self):
+        self.prepare_missing_vagrant()
+        result, calls = self.run_setup(BAD_CHECKSUM="yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum verification", result.stderr)
+        self.assertFalse((self.repo / "install-calls.txt").exists())
+        self.assertEqual(calls, "")
+
+    def test_failed_vagrant_install_stops_build(self):
+        self.prepare_missing_vagrant()
+        result, calls = self.run_setup(FAIL_INSTALL="yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, "")
+
 
 if __name__ == "__main__":
     unittest.main()

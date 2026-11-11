@@ -100,7 +100,7 @@ seeded automatically.
 | Disk     | 150 GB    | 250 GB      | +10 GB                |
 | OS       | Windows 10/11 or Linux | — |
 
-**Required software (install manually before running setup):**
+**Install Git and VMware Workstation before running setup.**
 
 Missing VMware? Follow the [VMware installation walkthrough](docs/install-vmware.md).
 Setup prints these steps and stops if it cannot detect Workstation.
@@ -108,7 +108,7 @@ Setup prints these steps and stops if it cannot detect Workstation.
 | Software                | Version | Where                                                                             |
 |-------------------------|---------|-----------------------------------------------------------------------------------|
 | VMware Workstation Pro  | 17+     | [vmware.com](https://www.vmware.com/products/workstation-pro.html) (free for personal, educational and commercial use) |
-| Vagrant                 | 2.3+    | [developer.hashicorp.com/vagrant/install](https://developer.hashicorp.com/vagrant/install) |
+| Vagrant                 | 2.4.9 if missing | Setup installs it on Windows and Debian/Ubuntu-based Linux; [manual installation for other Linux distributions](https://developer.hashicorp.com/vagrant/install) |
 
 The setup scripts install the `vagrant-vmware-utility` service and the
 `vagrant-vmware-desktop` plugin when missing (see host compatibility below).
@@ -183,8 +183,10 @@ or prove that detections work. Rehearse the selected workshop operation next.
   The workshop rehearsal used Linux Mint on an x86-64 host. A fresh Windows-host
   end-to-end installation still needs validation. macOS/Fusion and ARM hosts
   (including Apple Silicon) are not supported by this workshop build.
-- Install Git and VMware before setup. Install Vagrant manually on Linux;
-  `setup.ps1` can install it on Windows. Docker Desktop is **not** required:
+- Install Git and VMware before setup. Setup installs missing Vagrant on Windows
+  and Debian/Ubuntu-based Linux (including Mint). Linux verifies the pinned
+  HashiCorp package checksum before installation and preserves existing Vagrant.
+  Other Linux distributions require manual Vagrant installation. Docker Desktop is **not** required:
   Docker runs inside `docker-host`.
 - Linux automatic utility installation supports Debian/Ubuntu with systemd.
   Other Linux distributions need the VMware utility installed and running first.
