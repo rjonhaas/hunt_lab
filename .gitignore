@@ -20,3 +20,6 @@ __pycache__/
 
 # Generated environment summary contains lab credentials
 lab-info.md
+
+# Local provisioning logs may contain lab details
+.setup-logs/

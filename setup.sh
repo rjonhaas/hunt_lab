@@ -13,10 +13,22 @@
 # Usage:
 #   chmod +x setup.sh && ./setup.sh
 
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
+
+# Resume explicitly at a failed machine; never silently skip failed provisioning.
+START_AT="${2:-docker-host}"
+if [[ $# -gt 0 && ( $# -ne 2 || "$1" != --from ) ]]; then
+  echo "Usage: bash setup.sh [--from docker-host|win-dc|win-server|win11-victim]" >&2
+  exit 2
+fi
+case "$START_AT" in docker-host|win-dc|win-server|win11-victim) ;; *) echo "Invalid resume machine: $START_AT" >&2; exit 2;; esac
+STAGE_TIMEOUT="${LAB_STAGE_TIMEOUT_SECONDS:-10800}"
+[[ "$STAGE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || { echo "LAB_STAGE_TIMEOUT_SECONDS must be a positive integer" >&2; exit 2; }
+CURRENT_STAGE="prerequisites"
+trap 'rc=$?; echo "[setup] FAILED during $CURRENT_STAGE (exit $rc). Fix the error above, then rerun setup." >&2; exit "$rc"' ERR
 
 UTILITY_VERSION="1.0.22"
 VAGRANT_VERSION_TO_INSTALL="2.4.9"
@@ -30,7 +42,7 @@ die()  { echo -e "${RED}[setup] ERROR:${NC} $*" >&2; exit 1; }
 
 # Fail before downloading multi-GB boxes on unsupported hosts.
 [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]] || die "This build targets x86-64 Linux with Workstation or x64 Windows. macOS/Fusion and ARM hosts are not validated; use the hosted workshop lab."
-for tool in curl awk df; do
+for tool in curl awk df timeout tee; do
   command -v "$tool" >/dev/null || die "Required command missing: $tool"
 done
 TOTAL_RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
@@ -121,32 +133,69 @@ log ""
 
 HOST_IP="192.168.56.10"
 
-log "Step 1/4 - docker-host (Elasticsearch + Kibana + Fleet + Caldera + LocalStack)..."
-vagrant up docker-host --provider vmware_desktop --provision
-for artifact in elastic-credentials.txt fleet-enrollment-token.txt; do
-  [[ -s "$artifact" ]] || die "docker-host did not produce $artifact. Check bootstrap and /vagrant shared-folder access before starting Windows guests."
+umask 077
+LOG_DIR="$SCRIPT_DIR/.setup-logs/$(date +%Y%m%d-%H%M%S)-$$"
+mkdir -p "$LOG_DIR"
+run_machine() {
+  local machine="$1" attempt rc logfile
+  CURRENT_STAGE="$machine"
+  for attempt in 1 2 3; do
+    logfile="$LOG_DIR/$machine-attempt-$attempt.log"
+    log "Building $machine (attempt $attempt/3); log: $logfile"
+    if timeout --kill-after=30 "$STAGE_TIMEOUT" vagrant up "$machine" --provider vmware_desktop --provision 2>&1 | tee "$logfile"; then
+      return 0
+    else
+      rc=${PIPESTATUS[0]}
+      [[ "$rc" -ne 0 ]] || rc=1
+    fi
+    # Retry only an explicit download failure. Do not mask guest script errors.
+    if [[ "$attempt" -lt 3 ]] && grep -Eqi 'error occurred while downloading|Could not resolve host|Failed to connect|SSL connect error' "$logfile"; then
+      warn "Download interrupted; retrying $machine in 10 seconds (cached progress is retained)."
+      sleep 10
+    elif [[ "$attempt" -lt 3 ]] && grep -Eqi 'timed out while attempting to connect via WinRM|WinRM.*connection refused' "$logfile"; then
+      warn "WinRM connection failed; reloading $machine before retrying its provisioning."
+      if ! timeout --kill-after=30 900 vagrant reload "$machine" 2>&1 | tee "$LOG_DIR/$machine-reload-$attempt.log"; then
+        die "Could not recover $machine. See $LOG_DIR. Resume after fixing connectivity: bash setup.sh --from $machine"
+      fi
+    else
+      die "$machine failed (exit $rc; 124/137 indicates timeout). Log: $logfile\n  Fix the reported error, then resume: bash setup.sh --from $machine"
+    fi
+  done
+}
+started=false
+for machine in docker-host win-dc win-server win11-victim; do
+  [[ "$machine" != "$START_AT" ]] || started=true
+  if [[ "$machine" != docker-host ]]; then
+    for artifact in elastic-credentials.txt fleet-enrollment-token.txt; do
+      [[ -s "$artifact" ]] || die "docker-host did not produce $artifact. Resume with: bash setup.sh --from docker-host"
+    done
+  fi
+  if [[ "$machine" == win-server || "$machine" == win11-victim ]]; then
+    [[ -s domain-info.txt ]] || die "win-dc did not produce domain-info.txt. Resume with: bash setup.sh --from win-dc"
+  fi
+  if $started; then
+    run_machine "$machine"
+    log "$machine provisioning completed."
+  fi
 done
-log "docker-host is up."
 
-log "Step 2/4 - win-dc (Active Directory DC, includes reboot after promotion)..."
-vagrant up win-dc --provider vmware_desktop --provision
-[[ -s domain-info.txt ]] || die "win-dc did not produce domain-info.txt. Fix DC post-reboot provisioning before starting members."
-log "win-dc is up."
-
-log "Step 3/4 - win-server (domain member server, includes reboot after domain join)..."
-vagrant up win-server --provider vmware_desktop --provision
-log "win-server is up."
-
-log "Step 4/4 - win11-victim (Windows 11 + Sysmon + Elastic Agent)..."
-vagrant up win11-victim --provider vmware_desktop --provision
-log "win11-victim is up."
+CURRENT_STAGE="readiness validation"
+ready=false
+for attempt in 1 2 3 4 5; do
+  if timeout --kill-after=30 180 vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py' 2>&1 | tee "$LOG_DIR/readiness-$attempt.log"; then
+    ready=true
+    break
+  fi
+  [[ "$attempt" -eq 5 ]] || sleep 15
+done
+$ready || die "Provisioning finished but readiness failed. Logs: $LOG_DIR\n  Retry the check: vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py'"
 
 # ── 7. Print access info ──────────────────────────────────────────────────────
 ELASTIC_PASS=$(grep "^ELASTIC_PASSWORD=" "${SCRIPT_DIR}/docker/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]' || echo "<see docker/.env on docker-host>")
 
 log ""
 log "================================================================="
-log "  VM provisioning finished. Run the readiness check below before class."
+log "  VM provisioning and core readiness checks passed."
 log ""
 log "  Kibana (SIEM):   http://${HOST_IP}:5601   elastic / ${ELASTIC_PASS}"
 log "  Caldera (C2):    http://${HOST_IP}:8888   (admin / HuntLab2026!)"

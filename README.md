@@ -156,6 +156,28 @@ Both scripts do the same thing in the same order:
 large box downloads, Docker images, Windows reboots and enrollment. Cached-image
 rehearsals are not representative of a fresh participant download.
 
+Linux setup retries explicit download failures up to three times and saves logs
+under `.setup-logs/`. WinRM connection failures trigger a bounded reload and retry of that VM.
+Other provisioning failures stop dependent machines.
+After fixing the reported cause, resume with `bash setup.sh --from win11-victim`
+(or `docker-host`, `win-dc`, `win-server`). Earlier machines are not reprovisioned;
+required enrollment/domain files must still exist.
+
+Each machine has a three-hour limit, configurable with the positive integer
+`LAB_STAGE_TIMEOUT_SECONDS`. A timeout stops Vagrant, not the VM; check guest
+logs before retrying because a guest operation may still be finishing.
+Setup then checks services, agents and telemetry, retrying readiness five times
+before returning failure. It only reports success when those checks pass.
+Logs may contain lab details and are excluded from Git.
+
+Windows setup scripts run directly in the WinRM PowerShell session and propagate
+failures to Vagrant. WinRM requests use a five-minute timeout; individual Windows
+commands have a 30-minute execution limit. Each Windows VM finishes with checks
+for domain membership, Sysmon, Elastic Agent, Velociraptor, Sandcat and Atomic Red
+Team. These guest checks also run when using the Windows host setup script.
+
+On Windows, or to rerun an individual VM manually:
+
 If a step fails, fix the reported error and re-run that VM:
 `vagrant up <name> --provider vmware_desktop --provision`. Then start the remaining
 VMs in the order above. Running the whole setup script again reprovisions earlier

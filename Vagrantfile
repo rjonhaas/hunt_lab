@@ -36,6 +36,11 @@
 
 Vagrant.configure("2") do |config|
 
+  # Refresh stalled WinRM requests promptly after Windows reboots. The default
+  # operation timeout is 30 minutes, which can look like frozen provisioning.
+  config.winrm.timeout = 300
+  config.winrm.execution_time_limit = "PT30M"
+
   # Disable automatic box update checks for reproducibility
   config.vm.box_check_update = false
 
@@ -147,29 +152,63 @@ Vagrant.configure("2") do |config|
 
     # Stage 1: Install AD DS role and promote to DC; Vagrant reboots after
     dc.vm.provision "shell", name: "setup_dc", reboot: true, privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\setup_dc.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\setup_dc.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Stage 2: Post-reboot — create OUs/users, write domain-info.txt, install Sysmon + Elastic Agent
     dc.vm.provision "shell", name: "setup_dc_post_reboot", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\setup_dc_post_reboot.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\setup_dc_post_reboot.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Deploy Caldera sandcat agent automatically during provisioning
     dc.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~POWERSHELL
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Install Velociraptor client (repacked w/ embedded server config) as a service
     dc.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     dc.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    POWERSHELL
+
+    dc.vm.provision "shell", name: "verify_windows", privileged: false, inline: <<~POWERSHELL
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\validate_windows.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
   end
 
@@ -211,35 +250,74 @@ Vagrant.configure("2") do |config|
 
     # Stage 1: Configure network and join domain; Vagrant reboots after
     srv.vm.provision "shell", name: "setup_win_server", reboot: true, privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\setup_win_server.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\setup_win_server.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Stage 2: Post-reboot — install Sysmon and Elastic Agent
     srv.vm.provision "shell", name: "setup_win_server_tools", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\setup_win_server_tools.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\setup_win_server_tools.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Pre-stage decoy "Finance" share for the DFIR-RansomHub-2025-Lab scenario.
     # Idempotent — re-running just refreshes the contents.
     srv.vm.provision "shell", name: "seed_ransomhub_decoy", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\scenarios\\ransomhub\\seed_decoy_data.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\scenarios\\ransomhub\\seed_decoy_data.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Deploy Caldera sandcat agent automatically during provisioning
     srv.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~POWERSHELL
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Install Velociraptor client (repacked w/ embedded server config) as a service
     srv.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     srv.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    POWERSHELL
+
+    srv.vm.provision "shell", name: "verify_windows", privileged: false, inline: <<~POWERSHELL
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\validate_windows.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
   end
   # ── Windows 11 Victim ─────────────────────────────────────────────────────
@@ -279,29 +357,63 @@ Vagrant.configure("2") do |config|
 
     # Run script from shared folder — avoids WinRM file-upload bug in vagrant-vmware-desktop
     win.vm.provision "shell", name: "install_win_tools", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_win_tools.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\install_win_tools.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Domain-join win11-victim to lab.local (requires win-dc to be fully provisioned)
     win.vm.provision "shell", name: "join_domain", reboot: true, privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\join_domain.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\join_domain.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Deploy Caldera sandcat agent automatically during provisioning
     win.vm.provision "shell", name: "deploy_caldera_agent", privileged: false, inline: <<~POWERSHELL
       powercfg /change standby-timeout-ac 0 | Out-Null
       powercfg /change hibernate-timeout-ac 0 | Out-Null
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\deploy_caldera_agent.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Install Velociraptor client (repacked w/ embedded server config) as a service
     win.vm.provision "shell", name: "install_velociraptor_client", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\install_velociraptor_client.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
 
     # Install Atomic Red Team (Invoke-AtomicRedTeam + all atomics)
     win.vm.provision "shell", name: "install_atomic_red_team", privileged: false, inline: <<~POWERSHELL
-      powershell -ExecutionPolicy Bypass -File "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\install_atomic_red_team.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    POWERSHELL
+
+    win.vm.provision "shell", name: "verify_windows", privileged: false, inline: <<~POWERSHELL
+      $ErrorActionPreference = "Stop"
+      $ProgressPreference = "SilentlyContinue"
+      $LASTEXITCODE = 0
+      & "C:\\vagrant\\scripts\\validate_windows.ps1"
+      if (-not $?) { exit 1 }
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     POWERSHELL
   end
 
