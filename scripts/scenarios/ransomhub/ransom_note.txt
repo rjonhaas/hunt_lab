@@ -1,0 +1,19 @@
+!!! HUNT LAB - SIMULATED RANSOMWARE NOTE !!!
+=============================================
+
+This is NOT a real ransom note. It is a benign artifact dropped by the
+Hunt Lab recreation of the The DFIR Report "Hide Your RDP: Password Spray
+Leads to RansomHub Deployment" (2025-06).
+
+If you are reading this on a host that is not part of the lab, contact your
+SOC immediately - the operation has escaped its sandbox.
+
+In the original RansomHub intrusion the note read approximately:
+
+    Hello, your data has been stolen and encrypted by RansomHub.
+    Contact us via the TOR onion site below within 72 hours
+    or your data will be published.
+    Personal ID: <victim id>
+    Onion: <redacted>
+
+For lab use only.
