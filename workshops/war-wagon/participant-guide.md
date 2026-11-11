@@ -8,7 +8,7 @@ in Kibana. Complete [the worksheet](hunt-worksheet.md) as you work.
 
 ## Choose your path
 
-| Step | Hosted Proxmox | Local lab |
+| Step | Hosted Kibana | Local lab |
 |---|---|---|
 | Interpret report | Discuss behavior choices with Joe | Identify behaviors yourself |
 | Build abilities | Joe demonstrates; explain your proposed commands | Create or adapt abilities yourself |
@@ -17,7 +17,7 @@ in Kibana. Complete [the worksheet](hunt-worksheet.md) as you work.
 | Hunt | Independently search shared Kibana data | Search your own Kibana data |
 | Submit | Two flags plus evidence worksheet | Same flags plus your own evidence worksheet |
 
-Local labs must be ready before class. Follow [repository setup](../../README.md)
+Local labs must be ready before class. Follow [local setup](../../docs/local-setup.md)
 and its VMware/Vagrant prerequisites. Hosted students do not run provisioning,
 modify Caldera, reset VMs, or edit shared Elastic objects. The instructor supplies
 access details and the indexed hostname; never assume local and hosted IPs match.

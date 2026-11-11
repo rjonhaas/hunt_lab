@@ -1,737 +1,86 @@
-# Hunt Lab — Elastic SIEM + MITRE Caldera + Active Directory + LocalStack + Tracecat SOAR
-
-A self-contained threat hunting lab. One Linux VM runs the SIEM stack, C2
-framework, and a simulated AWS environment as Docker containers; an optional
-TraceCat SOAR overlay closes the detection-to-response loop via Kibana webhooks
-and automated playbooks. Three Windows VMs (`win-dc`, `win-server`,
-`win11-victim`) form an Active Directory domain preloaded with Sysmon, Elastic
-Agent, MITRE Caldera sandcat, and Atomic Red Team — ready to hunt as soon as
-`vagrant up` finishes.
-
-The lab also ships with two fully wired-up Caldera scenarios that exercise
-complementary detection surfaces:
-
-- **DFIR-RansomHub-2025-Lab** — recreation of The DFIR Report's June 2025
-  RansomHub case (endpoint-heavy: process / file / DNS / S3 exfil).
-- **Identity-Chain-2025-Lab** — Kerberoasting → DCSync → Golden Ticket →
-  Pass-the-Ticket (identity-side: 4769, 4662, Mimikatz patterns).
-
-Both adversaries, all abilities, decoy data, and the S3 exfil target are
-seeded automatically.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                  Host-Only Network: 192.168.56.0/24                     │
-│                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │  docker-host          192.168.56.10        Ubuntu 22.04          │   │
-│  │  ─────────────────────────────────────────────────────────────   │   │
-│  │  Elasticsearch  Kibana  Fleet Server  Caldera  LocalStack        │   │
-│  │  Filebeat       CloudTrail-gen        bootstrap (one-shot)       │   │
-│  │  Tracecat (optional SOAR overlay — see docker-compose.tracecat)  │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-│         ▲                  ▲                  ▲                         │
-│         │ Fleet            │ sandcat C2       │ S3 exfil target         │
-│         │                  │                  │                         │
-│  ┌──────┴───────┐  ┌───────┴──────┐  ┌────────┴─────────┐              │
-│  │  win-dc      │  │  win-server  │  │  win11-victim    │              │
-│  │ 192.168.56.50│  │192.168.56.51 │  │  192.168.56.20   │              │
-│  │  WinSrv 2022 │  │  WinSrv 2022 │  │  Windows 11      │              │
-│  │  AD DS / DNS │  │  Domain mbr  │  │  Domain member   │              │
-│  │  lab.local   │  │  Finance SMB │  │                  │              │
-│  └──────────────┘  └──────────────┘  └──────────────────┘              │
-│                                                                         │
-│  All Windows VMs ship with: Sysmon (SwiftOnSecurity) + Elastic Agent    │
-│  + Caldera sandcat (group: red) + Atomic Red Team                       │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### VM inventory
-
-| VM            | IP             | OS                  | RAM   | CPUs | Role                                     |
-|---------------|----------------|---------------------|-------|------|------------------------------------------|
-| `docker-host` | 192.168.56.10  | Ubuntu 22.04        | 12 GB | 4    | SIEM + C2 + cloud-sim Docker stack       |
-| `win11-victim`| 192.168.56.20  | Windows 11          | 4 GB  | 2    | Victim workstation (domain member)       |
-| `win-dc`      | 192.168.56.50  | Windows Server 2022 | 4 GB  | 2    | Active Directory DC + DNS (`lab.local`)  |
-| `win-server`  | 192.168.56.51  | Windows Server 2022 | 2 GB  | 2    | Domain member; hosts the SMB Finance share |
-
-### Container inventory (running on `docker-host`)
-
-| Container        | Port      | Role                                          |
-|------------------|-----------|-----------------------------------------------|
-| `elasticsearch`  | 9200      | Log/event store                               |
-| `kibana`         | 5601      | SIEM UI                                       |
-| `fleet-server`   | 8220      | Elastic Agent management                      |
-| `caldera`        | 8888      | MITRE Caldera 5.x (C2 / adversary emulation)  |
-| `localstack`     | 4566      | Simulated AWS (S3, IAM, CloudTrail, Lambda…)  |
-| `velociraptor`   | 8889/8000 | DFIR endpoint visibility (GUI / client comms) |
-| `filebeat`       | —         | Ships CloudTrail JSON to Elasticsearch        |
-| `cloudtrail-gen` | —         | Tails LocalStack request logs and emits a CloudTrail event per real API call |
-| `bootstrap`      | —         | One-shot init (writes Fleet token, seeds Caldera abilities, creates S3 bucket) |
-
-**Optional SOAR overlay** (`docker-compose.tracecat.yml` — see [SOAR / Tracecat](#soar--tracecat-optional)):
-
-| Container               | Port | Role                                        |
-|-------------------------|------|---------------------------------------------|
-| `tracecat-caddy`        | 8089 | Reverse proxy for Tracecat UI + API         |
-| `tracecat-api`          | —    | Tracecat REST API + webhook receiver        |
-| `tracecat-worker`       | —    | Temporal workflow worker                    |
-| `tracecat-executor`     | —    | Action executor (HTTP, scripts, integrations) |
-| `tracecat-ui`           | —    | Next.js SOAR frontend                       |
-| `tracecat-temporal`     | —    | Temporal workflow engine                    |
-| `tracecat-postgres`     | —    | Tracecat application database               |
-| `tracecat-temporal-postgres` | — | Temporal history database              |
-| `tracecat-redis`        | —    | Workflow queue / cache                      |
-| `tracecat-minio`        | —    | Artifact / blob storage                     |
-| `tracecat-migrations`   | —    | One-shot DB schema migration                |
-
----
-
-## Host requirements
-
-| Resource | Minimum   | Recommended | With Tracecat overlay |
-|----------|-----------|-------------|----------------------|
-| RAM      | 24 GB     | 32 GB       | 32 GB minimum         |
-| CPU      | 6 cores   | 8+ cores    | 8+ cores              |
-| Disk     | 150 GB    | 250 GB      | +10 GB                |
-| OS       | Windows 10/11 or Linux | — |
-
-**Install Git and VMware Workstation before running setup.**
-
-Missing VMware? Follow the [VMware installation walkthrough](docs/install-vmware.md).
-Setup prints these steps and stops if it cannot detect Workstation.
-
-| Software                | Version | Where                                                                             |
-|-------------------------|---------|-----------------------------------------------------------------------------------|
-| VMware Workstation Pro  | 17+     | [vmware.com](https://www.vmware.com/products/workstation-pro.html) (free for personal, educational and commercial use) |
-| Vagrant                 | 2.4.9 if missing | Setup installs it on Windows and Debian/Ubuntu-based Linux; [manual installation for other Linux distributions](https://developer.hashicorp.com/vagrant/install) |
-
-The setup scripts install the `vagrant-vmware-utility` service and the
-`vagrant-vmware-desktop` plugin when missing (see host compatibility below).
-
----
-
-## Quick start
-
-### Linux (x86-64, VMware Workstation)
-
-```bash
-git clone --branch workshop/war-wagon https://github.com/rjonhaas/hunt_lab.git
-cd hunt_lab
-chmod +x setup.sh
-./setup.sh
-```
-
-### Windows
-
-Open an **elevated PowerShell** prompt:
-
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force
-git clone --branch workshop/war-wagon https://github.com/rjonhaas/hunt_lab.git
-cd hunt_lab
-.\setup.ps1
-```
-
-Both scripts do the same thing in the same order:
-
-1. Verify VMware and Vagrant are installed; install the `vagrant-vmware-utility`
-   service and `vagrant-vmware-desktop` plugin if missing.
-2. Download Vagrant boxes (Ubuntu 22.04 ~700 MB, Windows 11 ~10 GB,
-   Windows Server 2022 ~8 GB).
-3. `vagrant up docker-host` — provisions Docker, runs `docker/setup.sh` inside
-   the VM, which writes `fleet-enrollment-token.txt` and `elastic-credentials.txt`
-   back to the repo root via the synced `/vagrant` folder.
-4. `vagrant up win-dc` — promotes the DC, creates OUs/users, writes
-   `domain-info.txt`, deploys agents.
-5. `vagrant up win-server` — joins domain, deploys agents, seeds the decoy
-   `Finance` SMB share.
-6. `vagrant up win11-victim` — joins domain, deploys agents.
-
-**Build before the workshop. Allow several hours** for the first run, including
-large box downloads, Docker images, Windows reboots and enrollment. Cached-image
-rehearsals are not representative of a fresh participant download.
-
-Linux setup retries explicit download failures up to three times and saves logs
-under `.setup-logs/`. WinRM connection failures trigger a bounded reload and retry of that VM.
-Other provisioning failures stop dependent machines.
-After fixing the reported cause, resume with `bash setup.sh --from win11-victim`
-(or `docker-host`, `win-dc`, `win-server`). Earlier machines are not reprovisioned;
-required enrollment/domain files must still exist.
-
-Each machine has a three-hour limit, configurable with the positive integer
-`LAB_STAGE_TIMEOUT_SECONDS`. A timeout stops Vagrant, not the VM; check guest
-logs before retrying because a guest operation may still be finishing.
-Setup then checks services, agents and telemetry, retrying readiness five times
-before returning failure. It only reports success when those checks pass.
-Logs may contain lab details and are excluded from Git.
-
-Windows setup scripts run directly in the WinRM PowerShell session and propagate
-failures to Vagrant. WinRM requests use a five-minute timeout; individual Windows
-commands have a 30-minute execution limit. Each Windows VM finishes with checks
-for domain membership, Sysmon, Elastic Agent, Velociraptor, Sandcat and Atomic Red
-Team. These guest checks also run when using the Windows host setup script.
-
-On Windows, or to rerun an individual VM manually:
-
-If a step fails, fix the reported error and re-run that VM:
-`vagrant up <name> --provider vmware_desktop --provision`. Then start the remaining
-VMs in the order above. Running the whole setup script again reprovisions earlier
-VMs too. For a known tool-install failure, use a named provisioner instead, e.g.
-`vagrant provision win-server --provision-with install_atomic_red_team`.
-
-**Provisioned does not yet mean ready.** From the repository on either Windows
-or Linux, run the read-only check using Python already in the Ubuntu services VM:
-
-```text
-vagrant status
-vagrant ssh docker-host -c 'python3 /vagrant/scripts/validate_lab.py'
-```
-
-It checks Elasticsearch, Kibana, online Fleet enrollment, recently seen trusted
-Caldera agents, and recent Sysmon events for **each** of `win-dc`, `win-server`,
-and `win11-victim`. Duplicate or stale agents cannot substitute for a missing
-host. It exits nonzero when readiness is incomplete. Allow a few minutes after
-provisioning for enrollment and ingestion, then retry. This does not run attacks
-or prove that detections work. Rehearse the selected workshop operation next.
-
-### Host compatibility and common setup blockers
-
-- This Vagrantfile targets **x86-64 Linux or x64 Windows with VMware Workstation**.
-  The workshop rehearsal used Linux Mint on an x86-64 host. A fresh Windows-host
-  end-to-end installation still needs validation. macOS/Fusion and ARM hosts
-  (including Apple Silicon) are not supported by this workshop build.
-- Install Git and VMware before setup. Setup installs missing Vagrant on Windows
-  and Debian/Ubuntu-based Linux (including Mint). Linux verifies the pinned
-  HashiCorp package checksum before installation and preserves existing Vagrant.
-  Other Linux distributions require manual Vagrant installation. Docker Desktop is **not** required:
-  Docker runs inside `docker-host`.
-- Linux automatic utility installation supports Debian/Ubuntu with systemd.
-  Other Linux distributions need the VMware utility installed and running first.
-- The guests allocate 22 GB RAM. Setup rejects hosts below 24 GB; 32 GB or more
-  leaves better room for the host. Keep 150 GB free at minimum, preferably 250 GB.
-  Vagrant caches boxes under `VAGRANT_HOME` (normally your user profile), which
-  may be on a different disk from the repository and VM files. Check both disks.
-- Enable hardware virtualization in firmware. Verify VMware can start an x64
-  guest before downloading the lab. On managed computers, installation or driver
-  restrictions may require using the conference-hosted lab.
-- The private lab uses `192.168.56.0/24`. Check for overlap with a VPN, LAN or
-  another hypervisor before starting. Changing this network requires updating
-  the Vagrantfile and guest provisioning settings together.
-- Keep the checkout in a local writable directory rather than OneDrive, a
-  network share or a cloud-synced directory. Do not build as Linux root: use your
-  normal account and let setup request sudo only for the utility installation.
-- Dependencies still include remotely downloaded boxes, packages and scripts.
-  Box versions are not pinned yet. For workshop release, record and verify a
-  tested downloadable version set, including the Windows image's evaluation
-  lifetime; disabling update checks alone does not pin fresh builds.
-
-Generated credentials stay local: `docker/.env`, `elastic-credentials.txt`,
-`fleet-enrollment-token.txt`, `domain-info.txt`, and `lab-info.md` are gitignored.
-Do not include them in support reports. Share the failing VM/provisioner name,
-exit code and redacted error text instead.
-
----
-
-## Accessing the lab
-
-| Service           | URL / Address              | Credentials                               |
-|-------------------|----------------------------|-------------------------------------------|
-| Kibana (SIEM)     | http://192.168.56.10:5601  | `elastic` / see `elastic-credentials.txt` |
-| Caldera (C2)      | http://192.168.56.10:8888  | `admin` / `HuntLab2026!`                  |
-| Velociraptor (DFIR)| https://192.168.56.10:8889 | `admin` / `HuntLab2026!` (set in `docker/.env`, self-signed TLS) |
-| Fleet Server      | http://192.168.56.10:8220  | internal — used by Elastic Agent          |
-| LocalStack API    | http://192.168.56.10:4566  | local test credentials (`test` / `test`)  |
-| Elasticsearch API | http://192.168.56.10:9200  | same as Kibana                            |
-| Tracecat (SOAR)   | http://192.168.56.10:8089  | email set in `.env.tracecat` / password on first login (optional overlay) |
-| `win-dc` (RDP)    | 192.168.56.50              | `LAB\vagrant` / `vagrant`                 |
-| `win-server` (RDP)| 192.168.56.51              | `LAB\vagrant` / `vagrant`                 |
-| `win11-victim` (RDP) | 192.168.56.20           | `LAB\vagrant` / `vagrant`                 |
-
-### Active Directory (`lab.local`, NetBIOS `LAB`)
-
-| Account          | Type            | Group         | Password        |
-|------------------|-----------------|---------------|-----------------|
-| `LAB\vagrant`    | Domain Admin    | Domain Admins | `vagrant`       |
-| `LAB\ajohnson`   | Domain Admin    | Domain Admins | `Lab!Password1` |
-| `LAB\jsmith`     | Standard user   | —             | `Lab!Password1` |
-| `LAB\bwilliams`  | Standard user   | —             | `Lab!Password1` |
-| `LAB\cdavis`     | Standard user   | —             | `Lab!Password1` |
-| `LAB\svc-backup` | Service account | —             | `Lab!Password1` |
-| `LAB\svc-deploy` | Service account | —             | `Lab!Password1` |
-
-DC safe-mode (DSRM) password: `Vagrant123!`
-
-> VMs created by Vagrant don't automatically appear in the VMware Workstation
-> GUI. To view one: **File → Open** → browse to
-> `.vagrant/machines/<name>/vmware_desktop/<name>.vmx`.
-
----
-
-## Built-in scenarios
-
-### 1. DFIR-RansomHub-2025-Lab — endpoint chain
-
-A faithful recreation of The DFIR Report's
-[*"Hide Your RDP: Password Spray Leads to RansomHub Deployment"*](https://thedfirreport.com/reports/)
-(2025-06). Thirteen Caldera abilities + three dwell-time abilities chain through
-recon → credential theft → discovery → defense evasion → exfil-to-S3 →
-shadow-copy delete → benign "encryptor" → log clearing → cloud-credential
-persistence.
-
-Run it: Caldera → **Operations → New Operation → Adversary
-`DFIR-RansomHub-2025-Lab`, Group `red`, Start**.
-
-- Scenario details, dwell-time tuning, hunt cheat-sheet:
-  [`scripts/scenarios/ransomhub/README.md`](scripts/scenarios/ransomhub/README.md).
-- ATT&CK Navigator layer:
-  [`attack_navigator/ransomhub_layer.json`](attack_navigator/ransomhub_layer.json).
-
-### 2. Identity-Chain-2025-Lab — Kerberos chain
-
-Six attack abilities + two dwell abilities covering Kerberoasting → DCSync →
-Golden Ticket → Pass-the-Ticket. Stresses Kerberos telemetry (4769 RC4 TGS,
-4662 directory replication, Mimikatz command-line patterns) instead of the
-RansomHub chain's process/file telemetry — useful for showing different
-detection primitives off the same lab.
-
-Run it: Caldera → **Operations → New Operation → Adversary
-`Identity-Chain-2025-Lab`, Group `red`, Start** (manually pick agents per
-ability — DCSync targets `win-dc`, the rest run on `win-server`; the scenario
-README explains why).
-
-- Scenario details, targeting matrix, hunt cheat-sheet:
-  [`scripts/scenarios/identity_chain/README.md`](scripts/scenarios/identity_chain/README.md).
-- ATT&CK Navigator layer:
-  [`attack_navigator/identity_chain_layer.json`](attack_navigator/identity_chain_layer.json).
-
-### What's seeded automatically
-
-- **Bootstrap container** creates `s3://ransomhub-exfil-lab` in LocalStack
-  and pushes both adversaries (RansomHub + Identity Chain) into Caldera.
-- **`win-server` provisioner** stages 105 decoy files under `C:\Shares\Finance\`
-  and publishes the SMB share.
-- **`win-dc` provisioner** registers the kerberoastable SPN
-  `HTTP/finance.lab.local` on `svc-deploy`.
-- **Each Windows VM** registers a sandcat agent in Caldera group `red`.
-
----
-
-## DFIR benchmark bundles — Find Evil with a known answer key
-
-Every Caldera operation that runs in this lab can be turned into a
-distributable DFIR benchmark: a per-host triage collection plus a
-machine-readable **ground-truth manifest** that records exactly which
-ATT&CK techniques fired, on which host, at what time, and with what
-command. Analysts can play "Find Evil" against the triage; tool authors
-can score their findings against the manifest.
-
-There are two ways to use this — pick one based on whether you want to
-run the lab yourself.
-
-### Path A — Just give me a dataset (no lab required)
-
-Skip the lab entirely. Pre-built bundles are published as
-[GitHub Releases](https://github.com/rjonhaas/hunt_lab/releases). Each
-release has **two assets**:
-
-- `evidence_<op_id>.zip` — Sysmon EVTX, all Windows event logs, registry
-  hives, `$MFT`, `$UsnJrnl`, Prefetch, Amcache, PSReadline, browser
-  history, scheduled tasks, Recycle Bin, for every host the operation
-  touched. Plus an analyst-safe `op_metadata.json` (time window and host
-  list — no scenario name, no technique list).
-- `ground_truth_<op_id>.json` — per-event answer key for the benchmark.
-  Used by scorers; downloading it before doing the analysis spoils the
-  Find Evil challenge.
-
-If you're playing analyst, download only the zip:
-
-```bash
-# Replace v1.0-rh-2026-06-06 with the latest release tag
-curl -L -O https://github.com/rjonhaas/hunt_lab/releases/download/v1.0-rh-2026-06-06/evidence_<op_id>.zip
-unzip evidence_<op_id>.zip -d find-evil-rh/
-ls find-evil-rh/        # win-dc/  win-server/  win11-victim/  op_metadata.json
-```
-
-If you're scoring an AI / DFIR tool, download both — `ground_truth.json`
-is the source of truth for precision/recall. The split is deliberate:
-two separate downloads means "I want to be blind" vs "I want to score"
-is a deliberate choice the participant makes, not something they
-accidentally trip over.
-
-### Path B — Run the lab and generate your own bundle
-
-Use this if you want a fresh run, a different scenario, longer dwell
-times to model real attacker tempo, or to experiment with the harness
-itself. Total time end-to-end on a clean clone: roughly 4–6 hours
-(mostly Windows VM provisioning on first bring-up — subsequent runs are
-~30 min from "Caldera ready" to "bundle on disk").
-
-```bash
-# 1. Bring up the lab (skip if already running). docker/setup.sh is run
-#    *inside* docker-host by its provisioner — you only invoke `vagrant up`.
-vagrant up docker-host
-vagrant up win-dc win-server win11-victim --no-parallel
-
-# 2. Verify all three sandcat agents are healthy in Caldera group `red`
-curl -sS -H "KEY: ADMIN123" http://192.168.56.10:8888/api/v2/agents \
-  | jq '[.[] | select(.group=="red")] | map({host, trusted, last_seen})'
-
-# 3. Launch a scenario in the Caldera UI (or via API) and note its operation id
-#    UI: http://192.168.56.10:8888  (admin / HuntLab2026!)
-#         Operations → New Operation → Adversary: DFIR-RansomHub-2025-Lab,
-#         Group: red, Auto-run → Start
-#    Op id is in the URL once the op is open, or:
-curl -sS -H "KEY: ADMIN123" http://192.168.56.10:8888/api/v2/operations \
-  | jq 'map({id, name, state})'
-
-# 4. Wait for the op to finish (~26 min for the RansomHub chain at default dwell)
-
-# 5. Generate the benchmark bundle
-python3 scripts/make_benchmark_bundle.py <op_id>
-```
-
-The bundle lands at `~/dfir_answers/<op_id>/`:
-
-```
-~/dfir_answers/<op_id>/
-├── README.md                          # scenario brief + analyst hints + manifest schema
-├── ground_truth/
-│   └── ground_truth.json              # answer key (per-event ts, host, technique, command, status, facts)
-├── evidence/
-│   ├── op_metadata.json               # scenario metadata, no answers — safe to share
-│   ├── velo_collections.json          # which Velo flow_id produced each tar
-│   └── <hostname>/C.<client>_F.<flow>.tar
-└── evidence_<op_id>.zip               # zipped evidence/ — ready to upload to a GitHub Release
-```
-
-Under the hood, three scripts do the work:
-
-| Script                              | What it does                                                     |
-|-------------------------------------|------------------------------------------------------------------|
-| `extract_ground_truth.py <op_id>`   | Pulls Caldera op + op-scoped links, emits normalized manifest.   |
-| `velo_collect.py --all-windows -o…` | Triggers a SANS-style Velo triage on each Windows host.          |
-| `make_benchmark_bundle.py <op_id>`  | Runs both, writes the bundle README, zips the evidence portion.  |
-
-All three honor `CALDERA_URL` / `CALDERA_API_KEY` env overrides and have
-`--help`.
-
-### Getting the evidence onto your analysis VM
-
-After `make_benchmark_bundle.py` finishes you have ~600 MB of triage tars
-on the host. To analyze them you'll want to move just the **evidence**
-portion (never the ground truth — that would invalidate your own
-benchmark) onto whatever DFIR workstation you use.
-
-The harness ships two transfer flags. **Use `--scp-evidence-to` if your
-analysis VM is reachable over SSH** (cleanest, one command, no shared
-folder plumbing); fall back to `--copy-evidence-to` for shared-folder
-setups where SSH isn't an option.
-
-```bash
-# Preferred — scp the evidence/ subtree straight to a SIFT (or any) VM.
-# Uses your ~/.ssh/config and ssh-agent; set up key auth first.
-python3 scripts/make_benchmark_bundle.py <op_id> \
-  --scp-evidence-to sansforensics@192.168.2.149:~/Desktop/cases/<op_id>
-
-# Alternative — drop into a local dir (often a VMware host-only shared
-# folder mounted into the analysis VM).
-python3 scripts/make_benchmark_bundle.py <op_id> \
-  --copy-evidence-to ~/Downloads/<op_id>
-```
-
-Both flags copy ONLY the `evidence/` subtree — `ground_truth.json` stays
-under `~/dfir_answers/<op_id>/ground_truth/` no matter what. If you want
-to score a tool, the ground-truth file is small enough to copy by hand
-or grab from the GitHub Release.
-
-Three common destination patterns:
-
-- **SSH-reachable analysis VM (recommended for SIFT).** Set up
-  passwordless key auth once, then `--scp-evidence-to` does the
-  end-to-end transfer in one command. Standard SANS SIFT image uses
-  `sansforensics@<sift-ip>`. The flag pre-creates the remote directory
-  via `ssh mkdir -p`, so the destination doesn't need to exist.
-
-- **VMware shared folder into a Linux analysis VM (fallback).** Add a
-  *read-only* shared folder on the VM pointing at your transfer dir
-  (e.g. host path `/home/<you>/Downloads`, guest name `case`). The guest
-  sees it at `/mnt/hgfs/case/`. Read-only is intentional — it physically
-  prevents the analysis VM from writing back into host paths that hold
-  answer keys.
-  ```bash
-  # On host:
-  python3 scripts/make_benchmark_bundle.py <op_id> --copy-evidence-to ~/Downloads/<op_id>
-  # In the VM:
-  cp -r /mnt/hgfs/case/<op_id> ~/cases/
-  ```
-
-- **Local analysis on the same host.** Just extract a tar wherever you
-  want and point your DFIR tools at it (URL-encoded paths inside —
-  `%5C` = `\`, `%3A` = `:`):
-  ```bash
-  mkdir -p analysis/win-dc && tar xf ~/dfir_answers/<op_id>/evidence/win-dc/C.*.tar -C analysis/win-dc
-  ```
-
-The triage tars come in Velociraptor's on-disk format: paths are
-URL-encoded under `uploads/ntfs/...`. Most DFIR tooling (EvtxECmd,
-MFTECmd, RegRipper, Plaso) doesn't care about path shape — point it at
-the relevant files. For a fully rehydrated `C:\Windows\...` layout, use
-Velociraptor's `Windows.KapeFiles.Extract` artifact against the original
-collection (kept in the Velo container's datastore), or unpack and
-rename by hand.
-
----
-
-## Threat hunting workflow
-
-1. **Adversary emulation** — pick an operation in Caldera (the RansomHub
-   chain, or run individual Atomic Red Team techniques via
-   `Invoke-AtomicTest` on any Windows VM).
-2. **Telemetry collection** — Sysmon (SwiftOnSecurity config) + Windows event
-   channels are forwarded by Elastic Agent to Fleet → Elasticsearch.
-   CloudTrail-style events from LocalStack flow in via Filebeat.
-3. **Hunt in Kibana** — start in **Discover** with the `logs-*` data view, or
-   open the prebuilt **HL - Threat Hunt Report Template** dashboard
-   (auto-imported on Windows host runs; manual import steps in
-   [`kibana/README.md`](kibana/README.md)).
-4. **Watch for alerts** — 21 Elastic Security detection rules (13 RansomHub +
-   8 Identity-Chain) are auto-imported by the bootstrap container. Find them
-   in **Security → Rules**, and matching alerts in **Security → Alerts**.
-   NDJSON sources: [`kibana/detection_rules/`](kibana/detection_rules/).
-
-### Useful Kibana indices
-
-| Index pattern                            | Content                                        |
-|------------------------------------------|------------------------------------------------|
-| `logs-windows.sysmon_operational-*`      | Process / network / file / registry events     |
-| `logs-windows.powershell_operational-*`  | PS script-block logging (4103/4104)            |
-| `logs-system.security-*`                 | Windows Security event log                     |
-| `logs-system.system-*`                   | Windows System event log                       |
-| `logs-aws.cloudtrail-*` (via filebeat)   | LocalStack CloudTrail-style events             |
-
-### Starter KQL queries
-
-```kql
-# All Sysmon process creation from the victim
-event.dataset : "windows.sysmon_operational" and event.code : "1"
-  and agent.hostname : "win11-victim"
-
-# LSASS memory access (credential dumping — Sysmon Event 10)
-event.dataset : "windows.sysmon_operational" and event.code : "10"
-  and winlog.event_data.TargetImage : *lsass.exe
-
-# Suspicious PowerShell
-process.name : "powershell.exe"
-  and process.command_line : (*-enc* or *bypass* or *DownloadString* or *IEX*)
-
-# AD: user added to Domain Admins (Security 4728)
-event.dataset : "system.security" and event.code : "4728"
-
-# AD: failed logon — brute force / password spray (4625)
-event.dataset : "system.security" and event.code : "4625"
-
-# Lateral movement: remote service creation (System 7045)
-event.dataset : "system.system" and event.code : "7045"
-
-# Caldera sandcat beaconing
-destination.ip : "192.168.56.10" and destination.port : 8888
-
-# CloudTrail S3 access in LocalStack
-event.dataset : "aws.cloudtrail" and cloud.service.name : "s3.amazonaws.com"
-```
-
----
-
-## SOAR / Tracecat (optional)
-
-Tracecat is a self-hosted SOAR platform (think open-source Tines) that closes
-the detection-to-response loop: Kibana fires a webhook when a detection rule
-hits, Tracecat receives it and executes a playbook.
-
-### What it adds
-
-- **Webhook receiver** — Kibana Connector → Webhook → `http://192.168.56.10:8089/api/webhooks/<id>`
-- **Automated enrichment** — playbook steps can query Elasticsearch for full
-  process trees, pull Caldera operation status, and call LocalStack IAM APIs
-  directly (api/worker/executor containers share `hunt_net`).
-- **Case management** — each triggered playbook creates a case pre-populated
-  with alert context.
-- **Scenario playbooks** (build after standing up the overlay):
-  - *RansomHub*: S3 exfil alert → pull bucket objects from LocalStack → build
-    incident timeline.
-  - *Identity Chain*: Kerberoasting alert → correlate 4769 + DCSync events →
-    assemble attack chain.
-
-### Setup
-
-```bash
-# On docker-host, from /vagrant/docker:
-cp .env.tracecat.example .env.tracecat
-
-# Generate the four required secrets (run each command, paste output into .env.tracecat):
-openssl rand -hex 32   # → TRACECAT__SERVICE_KEY
-openssl rand -hex 32   # → TRACECAT__SIGNING_SECRET
-openssl rand -hex 32   # → USER_AUTH_SECRET
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-                       # → TRACECAT__DB_ENCRYPTION_KEY
-
-# Set your superadmin email, then start the overlay:
-docker compose -f docker-compose.tracecat.yml --env-file .env.tracecat up -d
-
-# Watch startup (Temporal takes ~30 s to initialize):
-docker compose -f docker-compose.tracecat.yml --env-file .env.tracecat logs -f
-```
-
-Once healthy, open `http://192.168.56.10:8089`, sign in with the superadmin
-email and a password of your choice (set on first login), and create your first
-workflow.
-
-### Connecting Kibana alerts to Tracecat
-
-1. In Kibana → **Stack Management → Connectors → Create connector → Webhook**.
-2. URL: `http://172.20.0.1:8089/api/webhooks/<tracecat-workflow-id>`  
-   *(use the Docker bridge gateway IP `172.20.0.1` — Kibana is on `hunt_net`
-   and Tracecat-caddy is exposed on the host; alternatively use the host's
-   LAN IP `192.168.56.10:8089` if routing allows)*.
-3. Edit a detection rule → **Actions → On each alert → your webhook connector**.
-
-### Resource note
-
-The overlay adds ~8 GB RAM at idle (Temporal + two Postgres instances + Redis +
-MinIO + API/worker/executor). Ensure the `docker-host` VM has at least **20 GB
-RAM** assigned (Vagrantfile default is 12 GB — increase `v.memory` in the
-`docker-host` block before provisioning if you plan to run Tracecat).
-
----
-
-## Project structure
-
-```
-hunt_lab/
-├── setup.sh                                  # Linux/macOS quick-start
-├── setup.ps1                                 # Windows quick-start
-├── Vagrantfile                               # Defines the 4 lab VMs
-├── docker/
-│   ├── docker-compose.yml                    # SIEM + C2 + LocalStack stack
-│   ├── docker-compose.tracecat.yml           # Optional SOAR overlay (Tracecat)
-│   ├── setup.sh                              # Runs inside docker-host
-│   ├── .env.example                          # Copy to .env (HOST_IP, passwords)
-│   ├── .env.tracecat.example                 # Copy to .env.tracecat (Tracecat secrets)
-│   ├── bootstrap/
-│   │   ├── bootstrap.sh                      # One-shot init (Fleet, Caldera, S3)
-│   │   └── generate_cloudtrail_activity.sh   # Synthetic AWS event emitter
-│   ├── cloudtrail/                           # Filebeat input directory
-│   └── config/
-│       ├── caldera/local.yml                 # Caldera config (HOST_IP injected)
-│       ├── filebeat/filebeat.yml             # Ships CloudTrail logs to ES
-│       └── tracecat/Caddyfile                # Caddy reverse proxy for Tracecat
-├── kibana/
-│   ├── hunt_report_template.ndjson           # Saved-objects export
-│   ├── create_all_objects.py                 # Programmatic object creation
-│   ├── generate_template.py                  # Regenerate the NDJSON
-│   └── README.md
-└── scripts/
-    ├── install_docker.sh                     # docker-host: Docker Engine + Compose
-    ├── setup_dc.ps1                          # win-dc stage 1: AD DS + DC promotion
-    ├── setup_dc_post_reboot.ps1              # win-dc stage 2: OUs/users + agents
-    ├── setup_win_server.ps1                  # win-server stage 1: domain join
-    ├── setup_win_server_tools.ps1            # win-server stage 2: agents
-    ├── install_win_tools.ps1                 # win11-victim: Sysmon + Elastic Agent
-    ├── join_domain.ps1                       # win11-victim: domain join
-    ├── deploy_caldera_agent.ps1              # Standalone sandcat (re)deploy
-    ├── install_atomic_red_team.ps1           # Invoke-AtomicRedTeam + atomics library
-    ├── install_velociraptor_client.ps1       # Installs the repacked Velo client as a service
-    ├── validate_lab.ps1                      # Post-provision smoke test
-    ├── caldera_ransomhub_setup.py            # Pushes RansomHub abilities/adversary
-    ├── caldera_identity_setup.py             # Pushes Identity-Chain abilities/adversary
-    ├── extract_ground_truth.py               # Caldera op → ground_truth.json manifest
-    ├── velo_collect.py                       # Drives Velo SANS-style triage on Windows hosts
-    ├── make_benchmark_bundle.py              # Orchestrates extract + triage → distributable bundle
-    └── scenarios/
-        ├── ransomhub/                        # DFIR-RansomHub-2025-Lab assets
-        │   ├── README.md
-        │   ├── seed_decoy_data.ps1           # Stages C:\Shares\Finance\
-        │   ├── seed_localstack_bucket.sh     # Creates s3://ransomhub-exfil-lab
-        │   ├── fake_amd64.ps1                # Benign rename-and-note simulator
-        │   ├── nocmd.vbs / rcl.bat / include.txt  # Exfil wrapper artifacts
-        │   └── ransom_note.txt
-        └── identity_chain/                   # Identity-Chain-2025-Lab assets
-            └── README.md                     # Targeting matrix + hunt cheat-sheet
-```
-
-**Files generated at runtime (git-ignored):**
-
-| File                          | Written by                       | Consumed by                  |
-|-------------------------------|----------------------------------|------------------------------|
-| `elastic-credentials.txt`     | bootstrap container              | `setup.ps1`, you             |
-| `fleet-enrollment-token.txt`  | bootstrap container              | All Windows agent installs   |
-| `domain-info.txt`             | `setup_dc_post_reboot.ps1`       | `setup_win_server.ps1`, `join_domain.ps1` |
-
----
-
-## Lab management
-
-```bash
-# Where to look
-vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose logs -f'
-vagrant rdp win-dc        # or win-server, win11-victim
-
-# Re-run a single provisioner step
-vagrant provision win-dc --provision-with setup_dc_post_reboot
-vagrant provision win-server --provision-with seed_ransomhub_decoy
-
-# Rebuild a single VM
-vagrant destroy win11-victim -f
-vagrant up win11-victim --provision
-
-# Rebuild domain (destroy member before DC, otherwise the join guard fires)
-vagrant destroy win-server win-dc -f
-vagrant up win-dc --provision
-vagrant up win-server --provision
-
-# Re-deploy sandcat without full reprovision
-vagrant provision <vm> --provision-with deploy_caldera_agent
-
-# Tear it all down
-vagrant destroy -f
-
-# Restart just the container stack (data preserved)
-vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose restart'
-
-# Wipe container data and rebootstrap
-vagrant ssh docker-host -c 'cd /vagrant/docker && sudo docker compose down -v && sudo bash setup.sh'
-```
-
----
-
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-|---------|--------------|-----|
-| `fleet-enrollment-token.txt not found` when bringing up a Windows VM | `docker-host` provisioning didn't finish | `vagrant up docker-host --provision` and wait for it to complete |
-| `domain-info.txt not found` when bringing up `win-server` / `win11-victim` | `win-dc` stage 2 didn't finish | Check `C:\Windows\Temp\setup-dc-stage2.log` on `win-dc`; re-run `vagrant provision win-dc --provision-with setup_dc_post_reboot` |
-| Elastic Agent shows `HEALTHY` in Fleet but Discover is empty | Fleet output still pointing at `localhost:9200` | The bootstrap container patches the output to `http://192.168.56.10:9200` — re-run `docker compose run --rm bootstrap` from `docker-host` |
-| Caldera login loops back to `/login` | Magma UI built without `VITE_CALDERA_URL` | Already handled by the official 5.x image; ensure your `HOST_IP` in `docker/.env` is correct |
-| Sandcat downloads but never beacons | Process started in a WinRM session and died on disconnect | Re-run `vagrant provision <vm> --provision-with deploy_caldera_agent` — the agent is registered as the `WindowsSecurityUpdate` scheduled task and started via `Start-ScheduledTask` |
-| `vagrant up win-dc` hangs after promotion reboot | WinRM retries exhausted before AD finished coming online | `dc.winrm.retry_limit = 60` (15 min); if still hanging, re-run `vagrant provision win-dc --provision-with setup_dc_post_reboot` once the VM is back |
-| `win11-victim` clone fails with `CloneFolderNotFolder` | VMware service interferes with the full-copy loop | Already handled in `Vagrantfile` — `force_vmware_license = "workstation"` + `linked_clone = true` forces `vmrun -T ws` linked clones |
-| `setup.ps1` says VMware not installed (but it is) | VMware on a non-`C:` drive not on `%PATH%` | `setup.ps1` falls back to the registry `InstallPath` and adds it to `$env:PATH` for the session |
-| `Permission denied` on `.vagrant/` after a `sudo` run | A prior `sudo vagrant` left `.vagrant/` owned by root | `sudo chown -R $USER:$USER .vagrant && vagrant destroy -f && vagrant up` |
-| Elasticsearch OOMs / restart-loops | docker-host RAM too low | Increase `docker-host` `v.memory` in `Vagrantfile` (default 12 GB); Elastic alone wants ~4 GB |
-
----
-
-## Notes
-
-- This is a **lab environment**. Defender real-time protection is disabled on
-  the victim, the domain has weak/known passwords, and HTTPS is off across the
-  Elastic stack. Don't connect it to anything you care about.
-- The RansomHub recreation runs a **benign** simulator (`fake_amd64.ps1` —
-  rename-and-note only). No real encryption happens to the decoy share.
-- LocalStack runs in Community mode by default. Drop a token into
-  `localstack-auth-token.txt` at the repo root to enable Pro features.
+# War Wagon — DEATHCon workshop
+
+Turn a threat intelligence report into actions you can run in a lab, then find
+and explain the resulting evidence in Kibana.
+
+This is the `workshop/war-wagon` branch of Hunt Lab, used by Jon Haas and
+Joe Morrissey for DEATHCon. Start here even if you are using the hosted lab.
+
+## Choose your path
+
+| | Hosted workshop | Build your own lab |
+|---|---|---|
+| What you need | Browser and the supplied Kibana login | x64 Windows or x86-64 Linux, Git and VMware Workstation |
+| Who runs the actions | Instructor demonstrates Caldera and executes the shared operation | You build and run your own operation |
+| Where you investigate | Supplied Kibana URL and evidence window | Kibana in your local lab |
+| Start here | [Participant guide](workshops/war-wagon/participant-guide.md) | [Local setup](docs/local-setup.md), then the participant guide |
+
+Hosted access is **Kibana only**. You do not need to install Vagrant or build VMs
+to follow the hosted exercise. Access details come from the instructors.
+
+## Workshop materials
+
+1. Read [Discovery Before Collection](workshops/war-wagon/training-report.md).
+2. Follow the [participant guide](workshops/war-wagon/participant-guide.md) to
+   turn its four behaviors into abilities, a profile and an operation.
+3. Use the [hunt worksheet](workshops/war-wagon/hunt-worksheet.md) to record
+   predictions, searches and evidence for the two challenges.
+
+The report is a synthetic training scenario: user, system and network discovery,
+followed by staging a synthetic document. Finding a flag is only part of the
+exercise; show the endpoint evidence that supports it.
+
+## What the local setup builds
+
+One [Vagrantfile](Vagrantfile) defines four VMware virtual machines:
+
+| VM | Role | Lab address |
+|---|---|---|
+| `docker-host` | Ubuntu; Caldera, Elasticsearch, Kibana and Fleet | `192.168.56.10` |
+| `win-dc` | Windows Server; `lab.local` domain and DNS | `192.168.56.50` |
+| `win-server` | Windows Server; domain member and file share | `192.168.56.51` |
+| `win11-victim` | Windows 11; domain workstation | `192.168.56.20` |
+
+[setup.sh](setup.sh) and [setup.ps1](setup.ps1) install supported missing Vagrant
+components, download the boxes, start the services, build the domain, join its
+members, install endpoint tools and check readiness. Sysmon records activity,
+Elastic Agent ships it to Elasticsearch, and Sandcat connects Windows to Caldera.
+
+For a local build, allow several hours and use **24 GB RAM minimum, 32 GB
+recommended; 150 GB free disk minimum, 250 GB recommended**. Install Git and
+VMware Workstation first. See [local setup](docs/local-setup.md) for the exact
+commands, supported hosts, disk/cache requirements and recovery instructions.
+Docker Desktop is not needed. This build does not support Apple Silicon or Fusion.
+
+The base lab also includes LocalStack, Velociraptor, Atomic Red Team and two
+preloaded scenarios. These are additional capabilities, not prerequisites to
+understanding the workshop exercise. [Additional lab reference](docs/lab-reference.md)
+covers those scenarios, benchmark exports and the optional Tracecat overlay.
+
+## Before the exercise
+
+Local attendees should finish setup and run the readiness check before class.
+Also complete the [target file-telemetry preparation](workshops/war-wagon/scenario/README.md#required-target-preparation)
+on the chosen Windows target. The instructor does this for the hosted lab.
+A successful command does not guarantee that the expected event was collected.
+
+The hosted reference exercise has passed endpoint-evidence checks. Linux setup
+has passed a local rehearsal; the fresh Windows-host build is still under test.
+Restricted learner access and a complete local exercise still need verification.
+See the [validation record](workshops/war-wagon/scenario/rehearsal.md) for scope and limitations.
+
+## Finding your way around
+
+| Location | Purpose |
+|---|---|
+| [docs/local-setup.md](docs/local-setup.md) | Install, access, readiness and resume instructions |
+| [workshops/war-wagon/](workshops/war-wagon/README.md) | Report, participant guide and worksheet |
+| [scripts/](scripts/) | Windows and Linux machine setup |
+| [docker/](docker/) | Service definitions and first-run configuration |
+| [Instructor materials](workshops/war-wagon/instructor/README.md) | Delivery notes, rehearsal and reference builder |
+| [docs/lab-reference.md](docs/lab-reference.md) | Extra scenarios, tools and troubleshooting |
+
+Practice markers are public examples. Instructors provide workshop flag
+configuration separately; generated configurations, evidence and credentials
+should stay outside Git. The lab uses known training credentials and weakened
+guests; keep it on its intended lab network.
