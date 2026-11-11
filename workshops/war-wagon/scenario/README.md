@@ -8,6 +8,9 @@ resumes partial imports and refuses conflicting objects. It never starts an oper
 
 Configuration comes from `.war-wagon/config.json` at the repo root when present;
 otherwise it uses `practice.json`. Public practice markers are not conference flags.
+All markers use `{flag}` format, including the literal braces. After changing
+flags on an existing lab, use a fresh `run_label`, preload the new profile and
+run that profile to generate new evidence; existing events do not change.
 
 ## Required target preparation
 

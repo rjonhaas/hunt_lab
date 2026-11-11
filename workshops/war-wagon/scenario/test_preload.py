@@ -9,7 +9,7 @@ import preload
 
 class PreloadTests(unittest.TestCase):
     def setUp(self):
-        self.package = build.build({'run_label':'test-01', 'discovery_flag':'WW_PRACTICE_DISCOVERY', 'staging_flag':'WW_PRACTICE_STAGING'})
+        self.package = build.build({'run_label':'test-01', 'discovery_flag':'{WW_PRACTICE_DISCOVERY}', 'staging_flag':'{WW_PRACTICE_STAGING}'})
         self.state = {'abilities':{}, 'adversaries':{}}
         self.posts = []
 
@@ -34,7 +34,7 @@ class PreloadTests(unittest.TestCase):
             with patch.object(preload, 'ROOT', root):
                 self.assertEqual(preload.configuration()['run_label'], 'practice-01')
                 (root / '.war-wagon').mkdir()
-                config = {'run_label':'conference-01', 'discovery_flag':'WW_TEST_DISCOVERY', 'staging_flag':'WW_TEST_STAGING'}
+                config = {'run_label':'conference-01', 'discovery_flag':'{WW_TEST_DISCOVERY}', 'staging_flag':'{WW_TEST_STAGING}'}
                 (root / '.war-wagon/config.json').write_text(json.dumps(config), encoding='utf-8-sig')
                 self.assertEqual(preload.configuration(), config)
                 (root / '.war-wagon/config.json').write_text('invalid json')

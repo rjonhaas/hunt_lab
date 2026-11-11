@@ -108,15 +108,35 @@ operation ID and UTC evidence window they provide.
 
 **Local:**
 
-1. In Agents, identify the live Sandcat session on `win11-victim`. Check hostname,
-   user and recent check-in. Assign it to a group containing only that target.
-2. In Operations, create a new operation with a recognizable name.
-3. Select the prepared `WW-TRAIN-001 <run-label>` adversary and the **atomic** planner.
-4. Select your isolated target group. Review the actual selected agent, commands
-   and operation settings. Do not enable automatic cleanup before the hunt.
-5. Start the operation. Allow for agent check-in delays; do not launch duplicates.
-6. Inspect all four link results. Record the operation ID, indexed hostname and
+1. Open **Agents**. Identify the live, trusted Sandcat session on `win11-victim`;
+   check its hostname, user and recent check-in.
+2. Change that agent's **Group** to **`de&th`**, matching the walkthrough.
+   Leave `win-dc` and `win-server` in `red`. Verify that `de&th` contains only
+   `win11-victim` before creating the operation. This is a group you assign,
+   not one setup creates automatically.
+3. Open **Operations → Start New Operation** and use these settings:
+
+| Option | Select | Why |
+|---|---|---|
+| Operation Name | `De&thCON` | A recognizable name for this run. |
+| Adversary | `WW-TRAIN-001 practice-01` | The four prepared workshop actions. Use the instructor's profile if a different run label was supplied. |
+| Fact Source | `basic` | Keep the walkthrough's fact source; no custom facts are needed for these four actions. |
+| Group | `de&th` | Runs against the Windows 11 target only. Do not select `All groups` or `red` for this exercise. |
+| Planner | `atomic` | Runs the abilities in the adversary profile's order. This planner is separate from the Atomic Red Team tool. |
+| Obfuscators | `plain-text` | Keeps the commands readable for the hunt. |
+| Autonomous | `Run autonomously` | Executes the prepared actions without individual command approvals. |
+| Parser | `Use Default Parser` | Keeps the default output parsing. |
+| Auto Close | `Keep open forever` | Leaves the operation open while you inspect results and hunt evidence. |
+| Run State | `Run immediately` | Begins execution when you click Start. |
+| Jitter (sec/sec) | `2` / `8` | Uses a randomized check-in interval of 2–8 seconds during the operation. |
+
+4. Review the selected profile and group, then click **Start** once. Allow for
+   agent check-in delays; do not launch duplicate operations.
+5. Inspect all four link results. Record the operation ID, indexed hostname and
    UTC start/end times. A successful command does not prove its logs arrived.
+6. Keep the operation open and leave cleanup until after the Kibana hunt and
+   evidence capture. `Keep open forever` is a UI setting, not an instruction
+   to leave the lab running indefinitely.
 
 A run label identifies a staging directory. To run again, preserve the evidence,
 then follow the [instructor reset instructions](instructor/README.md#reruns-and-cleanup)
@@ -150,7 +170,7 @@ Use `file.path` and `process.entity_id` to connect it to its creating process.
 Inspect raw JSON if your displayed fields differ. Nearby timestamps alone do
 not prove a parent/child relationship.
 
-Submit both flag strings exactly and complete the worksheet with event/document
+Submit both flag strings in `{flag}` format, including the braces (omit the staging filename’s `.txt` extension), exactly and complete the worksheet with event/document
 IDs, host, UTC times, command/path and supporting process relationships. Explain
 what the evidence proves and what remains uncertain. Both local and hosted
 participants find the answers in Kibana; reading a flag from configuration is

@@ -12,7 +12,8 @@ For the conference, prepare the same configuration for local and hosted runs:
 1. Copy `practice.json` to `.war-wagon/config.json` in the repo root.
 2. Set a fresh `run_label` and the two conference flags. Keep the three keys;
    labels must be lowercase letters/digits/hyphens, and flags must match
-   `WW_[A-Z0-9_]{8,64}`. Flags must differ.
+   `\{[A-Za-z0-9_-]{1,80}\}` (for example, `{WW_DISCOVERY_2026}`).
+   Include the braces in the configuration and CTFd answers. Flags must differ.
 3. Supply this configuration privately to local attendees before setup. Place
    the same configuration in the hosted checkout before bootstrap.
 4. Run setup. Bootstrap preloads and reads back the four abilities and profile.

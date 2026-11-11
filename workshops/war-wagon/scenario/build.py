@@ -18,8 +18,8 @@ def validate(config):
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}', config['run_label']):
         raise ValueError('run_label must be 1–40 lowercase letters, digits or hyphens')
     for key in ('discovery_flag', 'staging_flag'):
-        if not re.fullmatch(r'WW_[A-Z0-9_]{8,64}', config[key]):
-            raise ValueError('Flags must match WW_[A-Z0-9_]{8,64}')
+        if not re.fullmatch(r'\{[A-Za-z0-9_-]{1,80}\}', config[key]):
+            raise ValueError('Flags must use {flag} format with 1–80 letters, digits, underscores or hyphens inside the braces')
     if config['discovery_flag'] == config['staging_flag']:
         raise ValueError('Flags must differ')
 
