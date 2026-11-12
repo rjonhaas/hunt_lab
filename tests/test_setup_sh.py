@@ -35,7 +35,7 @@ case "$1" in
  --version) echo 'Vagrant 2.4.9';;
  plugin) printf 'other-plugin (1.0)\\nvagrant-vmware-desktop (3.0.5)\\n';;
  validate) exit 0;;
- reload) exit 0;;
+ reload) [ "${FAIL_RELOAD:-}" != yes ] || exit 1;;
  status) if [ "$2" = "${MISSING_VM:-}" ]; then echo "1,$2,state,not_created"; else echo "1,$2,state,poweroff"; fi;;
  ssh) [ "${FAIL_READINESS:-}" != yes ] || exit 1;;
  up)
@@ -47,6 +47,11 @@ case "$1" in
   if [ "$2" = "${WINRM_FAIL_VM:-}" ] && [ ! -f winrm-retried ]; then
    touch winrm-retried
    echo 'Vagrant timed out while attempting to connect via WinRM.'
+   exit 1
+  fi
+  if [ "$2" = "${BOOT_FAIL_VM:-}" ] && { [ ! -f boot-retried ] || [ "${BOOT_ALWAYS_FAIL:-}" = yes ]; }; then
+   touch boot-retried
+   echo 'Timed out while waiting for the machine to boot.'
    exit 1
   fi
   [ "$2" != "${FAIL_VM:-}" ] || exit 42
@@ -112,6 +117,28 @@ esac''')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls.count("up win11-victim"), 2)
         self.assertEqual(calls.count("reload win11-victim"), 1)
+
+    def test_slow_win11_boot_reloads_to_finish_shared_folder_setup(self):
+        result, calls = self.run_setup(BOOT_FAIL_VM="win11-victim")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.count("up win11-victim"), 2)
+        self.assertEqual(calls.count("reload win11-victim"), 1)
+        self.assertEqual(calls.count("up docker-host"), 1)
+
+    def test_persistent_win11_boot_failure_stops_after_three_attempts(self):
+        result, calls = self.run_setup(BOOT_FAIL_VM="win11-victim", BOOT_ALWAYS_FAIL="yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls.count("up win11-victim"), 3)
+        self.assertNotIn("ssh docker-host", calls)
+        self.assertIn("bash setup.sh --from win11-victim", result.stderr)
+
+    def test_failed_boot_recovery_stops_before_readiness(self):
+        result, calls = self.run_setup(BOOT_FAIL_VM="win11-victim", FAIL_RELOAD="yes")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls.count("up win11-victim"), 1)
+        self.assertEqual(calls.count("reload win11-victim"), 1)
+        self.assertNotIn("ssh docker-host", calls)
+        self.assertIn("Could not recover win11-victim", result.stderr)
 
     def test_resume_starts_dependencies_without_reprovisioning(self):
         for name in ("elastic-credentials.txt", "fleet-enrollment-token.txt", "domain-info.txt"):

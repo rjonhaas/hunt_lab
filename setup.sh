@@ -152,9 +152,11 @@ run_machine() {
     if [[ "$attempt" -lt 3 ]] && ! grep -Eqi 'URL returned error: (401|403|404)' "$logfile" && grep -Eqi 'error occurred while downloading|error while downloading the metadata|Could not resolve host|Failed to connect|SSL connect error' "$logfile"; then
       warn "Download interrupted; retrying $machine in 10 seconds (cached progress is retained)."
       sleep 10
-    elif [[ "$attempt" -lt 3 ]] && { grep -Eqi 'timed out while attempting to connect via WinRM|WinRM.*connection refused' "$logfile" || { grep -q 'Timeout::Error' "$logfile" && grep -q 'plugins/communicators/winrm/' "$logfile"; }; }; then
-      warn "WinRM connection failed; reloading $machine before retrying its provisioning."
-      if ! timeout --kill-after=30 900 vagrant reload "$machine" 2>&1 | tee "$LOG_DIR/$machine-reload-$attempt.log"; then
+    elif [[ "$attempt" -lt 3 ]] && { grep -Eqi 'timed out while attempting to connect via WinRM|WinRM.*connection refused' "$logfile" || { [[ "$machine" == win11-victim ]] && grep -Fqi 'Timed out while waiting for the machine to boot' "$logfile"; } || { grep -q 'Timeout::Error' "$logfile" && grep -q 'plugins/communicators/winrm/' "$logfile"; }; }; then
+      # A timed-out boot can leave shared folders and private networking
+      # unconfigured. Reload completes those provider steps before provisioning.
+      warn "Windows connection failed; reloading $machine to finish networking and shared folders before retrying."
+      if ! timeout --kill-after=30 1500 vagrant reload "$machine" 2>&1 | tee "$LOG_DIR/$machine-reload-$attempt.log"; then
         die "Could not recover $machine. See $LOG_DIR. Resume after fixing connectivity: bash setup.sh --from $machine"
       fi
     else

@@ -117,8 +117,10 @@ or prove that detections work. Rehearse the selected workshop operation next.
 ### Host compatibility and common setup blockers
 
 - This Vagrantfile targets **x86-64 Linux or x64 Windows with VMware Workstation**.
-  The workshop rehearsal used Linux Mint on an x86-64 host. A fresh Windows-host
-  end-to-end installation is being tested and has not yet passed final readiness. macOS/Fusion and ARM hosts
+  Workshop rehearsals passed core readiness on Linux Mint and Windows 10 build
+  19045 with Workstation 17.6.4, Vagrant 2.4.9 and the Windows 11 box version
+  2607.1.0. The Windows test rebuilt all four guests, then repeated a clean
+  Windows 11 build using cached boxes; this does not measure fresh download time. macOS/Fusion and ARM hosts
   (including Apple Silicon) are not supported by this workshop build.
 - Install Git and VMware before setup. Setup installs missing Vagrant on Windows
   and Debian/Ubuntu-based Linux (including Mint). Linux verifies the pinned
@@ -134,6 +136,20 @@ or prove that detections work. Rehearse the selected workshop operation next.
 - Enable hardware virtualization in firmware. Verify VMware can start an x64
   guest before downloading the lab. On managed computers, installation or driver
   restrictions may require using the conference-hosted lab.
+- If Windows 11 becomes completely unresponsive, including VMware Tools and
+  WinRM, save your host work and restart the Windows host before retrying. In
+  rehearsal, restarting a host with 63 days of uptime resolved repeated guest
+  freezes; VBS remained enabled. This is an observed workaround, not a proven
+  root cause. Setup never automatically reboots the physical host.
+- Fresh Windows 11 boots get a 20-minute communicator window. On Linux, an
+  explicit Windows 11 boot timeout triggers a guest reload to finish shared-folder
+  and network setup, with at most three build attempts. Provisioning errors still stop setup. Resume a failed
+  Windows 11 stage with `bash setup.sh --from win11-victim`.
+- Windows 11 preparation allows services 120 seconds to start and reboots the
+  guest before installing Elastic Agent. This addresses the observed Service
+  Control Manager event 7009 at its default 30-second limit. Setup still fails
+  if Elastic Agent cannot install or start; increasing the timeout does not
+  hide a failed service.
 - The private lab uses `192.168.56.0/24`. Check for overlap with a VPN, LAN or
   another hypervisor before starting. Changing this network requires updating
   the Vagrantfile and guest provisioning settings together.

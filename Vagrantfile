@@ -328,7 +328,7 @@ Vagrant.configure("2") do |config|
     win.vm.hostname         = "win11-victim"
     win.vm.communicator     = "winrm"
     win.vm.network          "private_network", ip: "192.168.56.20"
-    win.vm.boot_timeout     = 600   # Windows 11 boot can exceed the 300s default
+    win.vm.boot_timeout     = 1200  # Fresh Windows 11 boots can exceed 10 minutes on a busy host
 
     win.vm.provider "vmware_desktop" do |v|
       v.memory = 4096
@@ -354,6 +354,14 @@ Vagrant.configure("2") do |config|
         Write-Error "domain-info.txt not found. Run 'vagrant up win-dc' first."
         exit 1
       }
+    POWERSHELL
+
+    # Elastic Agent can exceed SCM's default 30-second startup limit on a busy
+    # Windows 11 guest. Apply the guest-only timeout before the required reboot.
+    win.vm.provision "shell", name: "prepare_win11", reboot: true, privileged: false, inline: <<~POWERSHELL
+      $ErrorActionPreference = "Stop"
+      & "C:\\vagrant\\scripts\\prepare_win11.ps1"
+      if (-not $?) { exit 1 }
     POWERSHELL
 
     # Run script from shared folder — avoids WinRM file-upload bug in vagrant-vmware-desktop

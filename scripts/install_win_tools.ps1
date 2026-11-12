@@ -147,7 +147,10 @@ if (-not $AgentExtracted) {
 
 $ExistingAgent = Get-Service -Name "Elastic Agent" -ErrorAction SilentlyContinue
 if ($ExistingAgent) {
-    Write-Log "Elastic Agent already installed - skipping install (service: $($ExistingAgent.Status))."
+    Write-Log "Elastic Agent already installed (service: $($ExistingAgent.Status))."
+    if ($ExistingAgent.Status -ne 'Running') {
+        Start-Service -Name 'Elastic Agent' -ErrorAction Stop
+    }
 } else {
     Write-Log "Installing and enrolling Elastic Agent..."
     # Use Start-Process (same as Sysmon) to redirect elastic-agent's I/O at OS level.
@@ -178,7 +181,7 @@ $AgentService = Get-Service -Name "Elastic Agent" -ErrorAction SilentlyContinue
 if ($AgentService -and $AgentService.Status -eq "Running") {
     Write-Log "Elastic Agent service is running."
 } else {
-    Write-Log "WARNING: Elastic Agent service may not be running. Check 'sc query ElasticEndpoint'."
+    throw "Elastic Agent service is not running. Inspect the System event log and Elastic Agent logs before resuming provisioning."
 }
 
 # ── 7. Deploy Caldera sandcat agent ──────────────────────────────────────────
