@@ -404,6 +404,7 @@ _This file contains credentials and is gitignored. Regenerated on every ``setup.
 | Elasticsearch | http://${HostIP}:9200 | ``$esUser`` / ``$esPass`` |
 | Fleet Server | http://${HostIP}:8220 | — |
 | Caldera (C2) | http://${HostIP}:8888 | ``admin`` / ``HuntLab2026!`` (red API key: ``ADMIN123``) |
+| LocalStack | http://${HostIP}:4566 | test / test (lab AWS credentials) |
 
 ## Active Directory
 

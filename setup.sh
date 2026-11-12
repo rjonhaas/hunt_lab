@@ -262,6 +262,7 @@ _This file contains credentials and is gitignored. Regenerated on every \`setup.
 | Elasticsearch | http://${HOST_IP}:9200 | \`elastic\` / \`${ELASTIC_PASS}\` |
 | Fleet Server | http://${HOST_IP}:8220 | — |
 | Caldera (C2) | http://${HOST_IP}:8888 | \`admin\` / \`HuntLab2026!\` (red API key: \`ADMIN123\`) |
+| LocalStack | http://${HOST_IP}:4566 | test / test (lab AWS credentials) |
 
 ## Active Directory
 

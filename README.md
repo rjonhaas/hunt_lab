@@ -24,7 +24,7 @@ and submit supporting events, not just a flag string.
 
 | VM | Purpose | Lab IP |
 |---|---|---|
-| `docker-host` | Ubuntu: Elasticsearch, Kibana, Fleet and Caldera | `192.168.56.10` |
+| `docker-host` | Ubuntu: Elastic, Kibana, Fleet, Caldera and LocalStack | `192.168.56.10` |
 | `win-dc` | Windows Server: Active Directory and DNS | `192.168.56.50` |
 | `win-server` | Windows Server: domain member and synthetic Finance share | `192.168.56.51` |
 | `win11-victim` | Windows 11: domain workstation and workshop target | `192.168.56.20` |
@@ -51,8 +51,11 @@ configuration separately so local and hosted runs use the same flags. Local
 operators can inspect their configuration; challenge completion requires the
 matching Kibana events and an explanation.
 
-This branch no longer deploys the cloud simulator, extra attack scenarios,
-Velociraptor, SOAR or benchmark tools. Changing branches does not uninstall an
+LocalStack supplies an S3/IAM sandbox for the optional
+[RansomHub scenario](scripts/scenarios/ransomhub/README.md). Its API operations
+appear as explicitly simulated cloud events in Kibana; the RansomHub practice
+flag is in endpoint telemetry. This branch does not deploy Velociraptor, SOAR
+or benchmark tools. Changing branches does not uninstall an
 existing lab; see [existing labs](docs/local-setup.md#existing-labs).
 The focused build needs a fresh end-to-end rehearsal; older full-lab results
 are not proof that this revision is ready for attendees.

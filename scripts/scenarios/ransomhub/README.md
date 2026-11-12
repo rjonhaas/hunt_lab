@@ -24,22 +24,38 @@ Source report: <https://thedfirreport.com/reports/>
 
 This branch includes the original profile and supporting files for an optional
 RansomHub walkthrough. It is separate from the four-action War Wagon CTF and
-does not contain that exercise's brace-wrapped flags.
+has its own brace-wrapped practice flag in endpoint telemetry.
 
-The workshop setup does not automatically provision this scenario. Load its
+Workshop setup starts LocalStack and its telemetry shippers. Load the optional
 abilities and adversary without starting an operation:
 
 ```bash
 CALDERA_URL=http://192.168.56.10:8888 python3 scripts/caldera_ransomhub_setup.py
 ```
 
+LocalStack runs at `192.168.56.10:4566` with lab credentials `test` / `test`.
+Setup creates the `ransomhub-exfil-lab` bucket and `analyst-readonly` IAM user.
+To add these services to an existing lab without restarting Elastic or Caldera:
+
+```bash
+cd docker
+docker compose build cloudtrail-gen
+bash setup-localstack.sh
+```
+
 Before running the full chain, prepare the Finance decoys with
-`seed_decoy_data.ps1` on win-server and provide LocalStack at
-`192.168.56.10:4566`, the `ransomhub-exfil-lab` bucket, and the
-`analyst-readonly` IAM user. LocalStack and its cloud telemetry pipeline are
-not installed by this focused workshop branch. The S3 exfiltration and cloud
-persistence actions require those services; loading the profile does not
-verify them. Atomic Red Team must be installed on the selected Windows hosts.
+`seed_decoy_data.ps1` on win-server. Atomic Red Team must be installed on the
+selected Windows hosts. Loading a profile does not start an operation.
+
+### Cloud evidence in Kibana
+
+Use `data_stream.dataset : "aws.cloudtrail"` in the War Wagon logs data view.
+These are **simulated CloudTrail-shaped events derived from LocalStack API
+operation/status logs**, not native AWS CloudTrail. They identify the service,
+operation and result; they do not recover request parameters, object contents,
+caller identity or the client's IP. `labels.simulated` marks this limitation.
+A flag hidden only inside an S3 object will not appear in these events.
+Endpoint command lines and file paths remain available through Sysmon.
 
 In Caldera, select **DFIR-RansomHub-2025-Lab** and review the target group.
 The original scenario targets the Windows lab machines in `red`; the workshop
@@ -113,3 +129,16 @@ docker exec -it hl-localstack awslocal s3 rm s3://ransomhub-exfil-lab/ --recursi
 # (rclone.exe, rclone.zip, nocmd.vbs, rcl.bat, include.txt, ransom_note.txt
 #  all live in C:\Users\Public\)
 ```
+
+## Endpoint CTF flag
+
+The `rh-08-tool-stage-artifacts` ability records `{RH_CLOUD_STAGING}` in its
+PowerShell command line and creates
+`C:\WarWagonTraining\ransomhub\{RH_CLOUD_STAGING}.txt`.
+The workshop Sysmon rule collects FileCreate events under that root. In Kibana,
+filter the actual target and operation time, then inspect `process.command_line`
+for Event ID 1 or `file.path` for Event ID 11. Submit the braces and inner value,
+without `.txt`. A flag file is staging evidence, not proof that exfil succeeded.
+
+Set `RH_CTF_FLAG='{your_conference_flag}'` when loading the profile to replace
+the public practice value. Existing indexed events retain their previous values.

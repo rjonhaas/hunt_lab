@@ -27,6 +27,7 @@ Then in Caldera UI: Operations -> New Operation -> Adversary
 """
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -49,6 +50,12 @@ DWELL_CREDS    = int(os.environ.get("RH_DWELL_CREDS",    "60"))   # post credent
 DWELL_IMPACT   = int(os.environ.get("RH_DWELL_IMPACT",  "120"))   # post exfil, pre encryption
 
 ADVERSARY_ID = "rh-adversary-dfir-ransomhub-2025-lab"
+
+# Public practice flag; set RH_CTF_FLAG when loading a conference profile.
+CTF_FLAG = os.environ.get("RH_CTF_FLAG", "{RH_CLOUD_STAGING}")
+if not re.fullmatch(r"\{[A-Za-z0-9_-]{1,80}\}", CTF_FLAG):
+    raise ValueError("RH_CTF_FLAG must use {flag} format with a safe alphanumeric/underscore/hyphen value")
+
 
 # Path layout inside the Windows VMs.
 # C:\vagrant is the Vagrant synced folder pointing at the repo root.
@@ -395,6 +402,11 @@ abilities = [
         "technique_name": "Ingress Tool Transfer",
         "technique_id": "T1105",
         "executors": psh(
+            "$ErrorActionPreference='Stop'; "
+            "$flagDir='C:\\WarWagonTraining\\ransomhub'; "
+            "New-Item -ItemType Directory -Path $flagDir -Force | Out-Null; "
+            f"Set-Content -LiteralPath (Join-Path $flagDir '{CTF_FLAG}.txt') "
+            "-Value 'Synthetic RansomHub workshop staging marker. No real data.'; "
             f"$src = '{SCEN}'; $dst = '{PUB}'; "
             "Copy-Item -Path (Join-Path $src 'nocmd.vbs')       -Destination $dst -Force; "
             "Copy-Item -Path (Join-Path $src 'rcl.bat')         -Destination $dst -Force; "

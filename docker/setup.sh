@@ -72,7 +72,7 @@ log "Pulling Docker images (this may take a few minutes on first run)..."
 # during `pull`, so skip them here and build caldera explicitly afterward.
 retry_image_operation docker compose pull --ignore-buildable
 log "Building local images (caldera)..."
-retry_image_operation docker compose build caldera
+retry_image_operation docker compose build caldera cloudtrail-gen
 
 # ── 4. Start core services (Elastic + Caldera) ───────────────────
 log "Starting Elasticsearch, Kibana, Caldera..."
@@ -86,6 +86,9 @@ docker compose run --rm bootstrap
 # ── 6. Start Fleet Server (needs service token set by bootstrap) ───────────────
 log "Starting Fleet Server..."
 docker compose up -d fleet-server
+
+log "Starting LocalStack and simulated cloud telemetry..."
+bash "${SCRIPT_DIR}/setup-localstack.sh"
 
 # ── 8. Health summary ─────────────────────────────────────────────────────────
 log ""

@@ -24,6 +24,9 @@ volumes:
   esdata:
   kibana_data:
   caldera_data:
+  localstack_data:
+  cloudtrail_data:
+  filebeat_data:
 
 services:
 
@@ -187,3 +190,76 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  # ── LocalStack ──────────────────────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:${LOCALSTACK_VERSION:-3.4}
+    container_name: localstack
+    restart: unless-stopped
+    environment:
+      - SERVICES=s3,iam,sts
+      - DEFAULT_REGION=us-east-1
+      - EAGER_SERVICE_LOADING=1
+      - DEBUG=0
+      - LS_LOG=info  # cloudtrail-gen tailer parses 'AWS service.Op => status' lines from this stream
+      - DATA_DIR=/var/lib/localstack/data
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+    networks:
+      hunt_net:
+        ipv4_address: 172.20.0.40
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Converts observed LocalStack API operation/status logs to simulated
+  # CloudTrail-shaped events. Not native AWS CloudTrail; no request payloads.
+  cloudtrail-gen:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloudtrail
+    image: hunt-lab/cloudtrail:local
+    container_name: cloudtrail-gen
+    restart: unless-stopped
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOCALSTACK_ENDPOINT=http://localstack:4566
+      - LOCALSTACK_CONTAINER=localstack
+      - CLOUDTRAIL_LOG_DIR=/cloudtrail
+      - DOCKER_SOCK=/var/run/docker.sock
+    volumes:
+      - cloudtrail_data:/cloudtrail
+      - ./bootstrap/cloudtrail_tailer.py:/tailer.py:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    entrypoint: ["python3", "-u", "/tailer.py"]
+    networks:
+      - hunt_net
+
+  # ── Filebeat ────────────────────────────────────────────────────────────────
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-8.19.14}
+    container_name: filebeat
+    user: root
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    volumes:
+      - filebeat_data:/usr/share/filebeat/data
+      - ./config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - cloudtrail_data:/var/log/localstack/cloudtrail:ro
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    networks:
+      - hunt_net
