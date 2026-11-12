@@ -47,19 +47,28 @@ if ($currentDomain -ieq $DomainName) {
     exit 0
 }
 
-# ── Update DNS to point at the DC ─────────────────────────────────────────────
-# The private adapter already has a static IP (set by install_win_tools.ps1).
-# We only need to update its DNS server address to point at win-dc.
-Write-Log "Pointing DNS at DC ($DCIP)..."
+# Both the private and NAT adapters must use AD DNS. Leaving NAT pointed at
+# VMware's resolver can make Windows send domain-discovery queries there.
+Write-Log "Pointing private and default-route adapters at AD DNS ($DCIP)..."
 $privateAdapter = Get-NetIPAddress -AddressFamily IPv4 |
     Where-Object { $_.IPAddress -like "192.168.56.*" } |
     Select-Object -First 1
-if ($privateAdapter) {
-    Set-DnsClientServerAddress -InterfaceIndex $privateAdapter.InterfaceIndex -ServerAddresses $DCIP
-    Write-Log "DNS set to $DCIP on adapter index $($privateAdapter.InterfaceIndex)."
-} else {
-    Write-Log "WARNING: Could not find 192.168.56.x adapter. Verify network config."
+if (-not $privateAdapter) { throw "Private 192.168.56.x adapter is missing; cannot join the domain." }
+$dnsInterfaces = @($privateAdapter.InterfaceIndex)
+$dnsInterfaces += @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' |
+    Select-Object -ExpandProperty InterfaceIndex)
+foreach ($index in ($dnsInterfaces | Sort-Object -Unique)) {
+    Set-DnsClientServerAddress -InterfaceIndex $index -ServerAddresses $DCIP -ErrorAction Stop
+    Write-Log "AD DNS configured on adapter index $index."
 }
+Clear-DnsClientCache
+$dcReady = $false
+for ($attempt = 1; $attempt -le 12; $attempt++) {
+    & nltest.exe "/dsgetdc:$DomainName" /force | Out-Host
+    if ($LASTEXITCODE -eq 0) { $dcReady = $true; break }
+    if ($attempt -lt 12) { Start-Sleep -Seconds 5 }
+}
+if (-not $dcReady) { throw "Domain-controller discovery failed after configuring AD DNS. Check DC DNS and network connectivity." }
 
 # ── Join the domain ────────────────────────────────────────────────────────────
 Write-Log "Joining domain '$DomainName' as $JoinUser ..."

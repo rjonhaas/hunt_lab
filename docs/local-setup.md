@@ -150,6 +150,9 @@ or prove that detections work. Rehearse the selected workshop operation next.
   Control Manager event 7009 at its default 30-second limit. Setup still fails
   if Elastic Agent cannot install or start; increasing the timeout does not
   hide a failed service.
+- Windows 11 domain join points both its private and default-route adapters at
+  the lab DC for DNS, clears cached lookups, and verifies controller discovery
+  before joining. This prevents VMware NAT DNS from handling AD discovery.
 - The private lab uses `192.168.56.0/24`. Check for overlap with a VPN, LAN or
   another hypervisor before starting. Changing this network requires updating
   the Vagrantfile and guest provisioning settings together.
