@@ -1,3 +1,11 @@
 FROM ghcr.io/mitre/caldera:latest
 
-# Workshop uses the built-in API, stockpile planner and Sandcat agent.
+# Dependencies for the enabled emulation, Human and SSL plugins.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends haproxy xvfb xauth python3-tk tini \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir -r /usr/src/app/plugins/emu/requirements.txt \
+    -r /usr/src/app/plugins/human/requirements.txt
+
+# Human workflow discovery imports GUI modules even on the headless server.
+ENTRYPOINT ["/usr/bin/tini", "--", "xvfb-run", "-a", "python3", "server.py"]

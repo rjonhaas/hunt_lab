@@ -26,3 +26,6 @@ lab-info.md
 
 # Optional instructor-supplied workshop flags/configuration and local evidence
 .war-wagon/
+
+# macOS Finder metadata
+.DS_Store

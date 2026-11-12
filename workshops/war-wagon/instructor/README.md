@@ -1,5 +1,7 @@
 # Instructor setup and reference solutions
 
+[RansomHub KQL run sheet](ransomhub-kql-run-sheet.md) — queries in operation order, flag hunt, cloud pivots and known test gaps.
+
 [Participant guide](../participant-guide.md) · [Repository home](../../../README.md)
 
 ## Prepare the configuration
