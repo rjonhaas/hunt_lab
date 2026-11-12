@@ -1,10 +1,8 @@
 # Discovery Before Collection
 
-**War Wagon training intelligence report · WW-TRAIN-001 · Draft 1**
+**War Wagon training intelligence report · WW-TRAIN-001 **
 
-This is a synthetic training narrative, not reporting about a real intrusion or
-attribution to an actual actor. The hosted reference exercise has been rehearsed; see the
-[validation record](scenario/rehearsal.md) for remaining checks.
+
 
 ## Intelligence summary
 
